@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>StockAI - 美股投顧助手</title>
-  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -430,15 +429,6 @@
 
     .page { display: none; }
     .page.active { display: block; }
-
-    /* K Line Chart */
-    .chart-container { background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
-    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .chart-title { font-size: 15px; font-weight: 600; }
-    .chart-badge { font-size: 11px; padding: 4px 8px; background: var(--bg); border-radius: 8px; color: var(--text-secondary); }
-    #chart { width: 100%; height: 280px; border-radius: 8px; overflow: hidden; }
-    .chart-loading { text-align: center; padding: 60px; color: var(--text-secondary); }
-    .chart-error { text-align: center; padding: 40px; color: var(--text-secondary); font-size: 13px; }
   </style>
 </head>
 <body>
@@ -787,16 +777,6 @@
         </div>
         ${quoteHtml}
         ${recHtml}
-        
-        <!-- K 線圖 -->
-        <div class="chart-container" id="chartContainer">
-          <div class="chart-header">
-            <span class="chart-title">📈 K線走勢圖</span>
-            <span class="chart-badge" id="chartBadge">加載中...</span>
-          </div>
-          <div id="chart"></div>
-        </div>
-        
         <div class="result-card">
           <div class="result-title">${typeLabels[type] || '分析結果'}</div>
           <div class="result-content">${content}</div>
@@ -809,83 +789,6 @@
 
       resultView.classList.add('show');
       addWatchlistBtn();
-      
-      // 載入 K 線圖
-      setTimeout(() => loadChart(ticker), 500);
-    }
-
-    // K 線圖
-    let chart = null;
-    async function loadChart(ticker) {
-      const chartEl = document.getElementById('chart');
-      const badge = document.getElementById('chartBadge');
-      if (!chartEl) return;
-      
-      try {
-        const res = await fetch('/api/chart/' + ticker);
-        const data = await res.json();
-        
-        if (data.success && data.candles && data.candles.length > 0) {
-          // 初始化圖表
-          if (chart) chart.remove();
-          
-          chart = LightweightCharts.createChart(chartEl, {
-            width: chartEl.clientWidth,
-            height: 280,
-            layout: { backgroundColor: '#ffffff', textColor: '#333' },
-            grid: { vertLines: { color: '#e5e7eb' }, horzLines: { color: '#e5e7eb' } },
-            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-            rightPriceScale: { borderColor: '#e5e7eb' },
-            timeScale: { borderColor: '#e5e7eb' }
-          });
-          
-          // 收盤價線
-          const lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
-          const cdata = data.candles.map(c => ({ time: c.time, value: c.close }));
-          lineSeries.setData(cdata);
-          
-          // K 線
-          const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a',
-            downColor: '#ef5350',
-            borderUpColor: '#26a69a',
-            borderDownColor: '#ef5350',
-            wickUpColor: '#26a69a',
-            wickDownColor: '#ef5350'
-          });
-          candlestickSeries.setData(data.candles);
-          
-          // 成交量柱
-          const volumeSeries = chart.addHistogramSeries({
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: 'volume'
-          });
-          chart.priceScale('volume').applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 }
-          });
-          volumeSeries.setData(data.candles.map(c => ({
-            time: c.time,
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)'
-          })));
-          
-          chart.timeScale().fitContent();
-          badge.textContent = '✅ 實時數據';
-          badge.style.color = 'var(--accent)';
-          
-          // 響應式
-          window.addEventListener('resize', () => {
-            if (chart) chart.resize(chartEl.clientWidth, 280);
-          });
-        } else {
-          chartEl.innerHTML = '<div class="chart-error">📊 K 線圖需要 Alpha Vantage API Key<br><small>請在 .env 設置 ALPHA_VANTAGE_KEY</small></div>';
-          badge.textContent = '⚠️ 需要 API';
-        }
-      } catch (e) {
-        chartEl.innerHTML = '<div class="chart-error">載入失敗</div>';
-        badge.textContent = '❌ 錯誤';
-      }
     }
 
     function backToHome() {
@@ -1077,100 +980,19 @@
 
     // ========== 投資組合功能 ==========
     let portfolio = JSON.parse(localStorage.getItem('stock_portfolio') || '[]');
-    let transactions = JSON.parse(localStorage.getItem('stock_transactions') || '[]');
-    let totalCash = 100000; // 模擬現金 $100,000
-    let cash = parseFloat(localStorage.getItem('stock_cash') || totalCash);
 
     function addToPortfolio(ticker, shares, buyPrice) {
-      const cost = shares * buyPrice;
-      
-      // 檢查現金是否足夠
-      if (cost > cash) {
-        showToast(`現金不足！需要 $${cost.toFixed(2)}，目前只有 $${cash.toFixed(2)}`);
-        return false;
-      }
-      
-      // 扣除現金
-      cash -= cost;
-      localStorage.setItem('stock_cash', cash.toString());
-      
-      // 更新持倉
       const existing = portfolio.find(p => p.ticker === ticker);
       if (existing) {
         const totalShares = existing.shares + shares;
         const totalCost = existing.shares * existing.buyPrice + shares * buyPrice;
         existing.shares = totalShares;
         existing.buyPrice = totalCost / totalShares;
-        existing.transactions = existing.transactions || [];
-        existing.transactions.push({ type: 'buy', shares, price: buyPrice, date: Date.now() });
       } else {
-        portfolio.push({ 
-          ticker, 
-          shares, 
-          buyPrice, 
-          date: Date.now(),
-          transactions: [{ type: 'buy', shares, price: buyPrice, date: Date.now() }]
-        });
+        portfolio.push({ ticker, shares, buyPrice, date: Date.now() });
       }
-      
-      // 記錄交易
-      transactions.push({ type: 'buy', ticker, shares, price: buyPrice, cost, date: Date.now() });
-      
       localStorage.setItem('stock_portfolio', JSON.stringify(portfolio));
-      localStorage.setItem('stock_transactions', JSON.stringify(transactions));
-      showToast(`✅ 已買入 ${ticker} ${shares} 股 @ $${buyPrice}，花費 $${cost.toFixed(2)}`);
-      return true;
-    }
-    
-    function sellStock(ticker, shares) {
-      const holding = portfolio.find(p => p.ticker === ticker);
-      if (!holding) return;
-      
-      // 獲取當前股價
-      fetch('/api/quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker })
-      }).then(r => r.json()).then(quote => {
-        if (!quote.success) {
-          showToast('無法獲取當前價格');
-          return;
-        }
-        
-        const currentPrice = quote.price;
-        const sellShares = Math.min(shares, holding.shares);
-        const revenue = sellShares * currentPrice;
-        const profit = (currentPrice - holding.buyPrice) * sellShares;
-        
-        // 更新持倉
-        holding.shares -= sellShares;
-        if (holding.shares <= 0) {
-          portfolio = portfolio.filter(p => p.ticker !== ticker);
-        }
-        
-        // 記錄交易
-        transactions.push({ 
-          type: 'sell', 
-          ticker, 
-          shares: sellShares, 
-          price: currentPrice, 
-          revenue,
-          profit,
-          date: Date.now() 
-        });
-        
-        // 增加現金
-        cash += revenue;
-        
-        localStorage.setItem('stock_portfolio', JSON.stringify(portfolio));
-        localStorage.setItem('stock_transactions', JSON.stringify(transactions));
-        localStorage.setItem('stock_cash', cash.toString());
-        
-        const profitText = profit >= 0 ? `賺 $${profit.toFixed(2)}` : `虧 $${Math.abs(profit).toFixed(2)}`;
-        showToast(`✅ 已賣出 ${ticker} ${sellShares} 股 @ $${currentPrice}，${profitText}`);
-        
-        renderPortfolio();
-      });
+      showToast(`已添加 ${ticker} ${shares} 股 @ $${buyPrice}`);
     }
 
     function showAddPortfolioDialog() {
@@ -1185,18 +1007,15 @@
       dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:500;display:flex;align-items:center;justify-content:center;';
       dialog.innerHTML = `
         <div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:320px;">
-          <div style="font-size:18px;font-weight:600;margin-bottom:8px;">📈 模擬買入</div>
-          <div style="font-size:14px;color:var(--accent);margin-bottom:16px;">可用現金: $${cash.toLocaleString('en-US', {minimumFractionDigits:2})}</div>
+          <div style="font-size:18px;font-weight:600;margin-bottom:16px;">添加持倉</div>
           <div style="font-size:14px;color:var(--text-secondary);margin-bottom:16px;">${currentTicker} 當前價格: $${currentPrice}</div>
-          <input type="number" id="portfolioShares" placeholder="買入股數" min="1"
-            style="width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;margin-bottom:12px;"
-            oninput="updateCostEstimate()">
-          <div id="costEstimate" style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;padding:8px;background:var(--bg);border-radius:8px;">
-            預估花費: $0.00
-          </div>
+          <input type="number" id="portfolioShares" placeholder="股數" 
+            style="width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;margin-bottom:12px;">
+          <input type="number" id="portfolioPrice" placeholder="買入價格" step="0.01" value="${currentPrice}"
+            style="width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;margin-bottom:16px;">
           <button onclick="doAddPortfolio()" 
             style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;">
-            確認買入
+            添加到持倉
           </button>
           <button onclick="this.closest('[style*=\'position:fixed\']').remove()"
             style="width:100%;padding:12px;background:var(--bg);border:none;border-radius:10px;font-size:14px;margin-top:10px;">取消</button>
@@ -1204,64 +1023,57 @@
       `;
       document.body.appendChild(dialog);
       
-      window.updateCostEstimate = function() {
-        const shares = parseFloat(document.getElementById('portfolioShares').value) || 0;
-        const total = shares * currentPrice;
-        const estEl = document.getElementById('costEstimate');
-        if (estEl) {
-          estEl.textContent = `預估花費: $${total.toLocaleString('en-US', {minimumFractionDigits:2})} | 餘額: $${(cash - total).toLocaleString('en-US', {minimumFractionDigits:2})}`;
-          estEl.style.color = total > cash ? '#F87171' : 'var(--text-secondary)';
-        }
-      };
-      
       window.doAddPortfolio = function() {
         const shares = parseFloat(document.getElementById('portfolioShares').value);
-        if (shares > 0 && currentPrice > 0) {
-          if (addToPortfolio(currentTicker, shares, currentPrice)) {
-            dialog.remove();
-          }
+        const price = parseFloat(document.getElementById('portfolioPrice').value);
+        if (shares > 0 && price > 0) {
+          addToPortfolio(currentTicker, shares, price);
+          dialog.remove();
         } else {
-          showToast('請輸入有效的股數');
+          showToast('請輸入有效的股數和價格');
         }
       };
     }
 
     async function renderPortfolio() {
       const container = document.getElementById('portfolioResult');
-      const totalValue = portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
-      const totalAssets = totalValue + cash;
-      const portfolioValue = totalValue;
-      
-      // 計算總盈虧
-      let totalProfit = 0;
-      let totalCost = 0;
-      
+      if (!portfolio.length) {
+        container.innerHTML = `
+          <div class="empty">
+            <div class="empty-icon">💼</div>
+            <div class="empty-text">還沒有持倉，點擊下方按鈕添加</div>
+          </div>
+          <button class="action-btn primary" onclick="showAddPortfolioDialog()" style="margin-top:16px;">
+            ➕ 添加持倉
+          </button>
+        `;
+        return;
+      }
+
       container.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
 
       try {
-        // 獲取實時報價
         const tickers = portfolio.map(p => p.ticker);
-        let quotes = {};
-        if (tickers.length > 0) {
-          const res = await fetch('/api/quotes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tickers })
-          });
-          const data = await res.json();
-          data.quotes?.forEach(q => { if (q.success) quotes[q.ticker] = q; });
-        }
+        const res = await fetch('/api/quotes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers })
+        });
+        const data = await res.json();
+
+        let totalCost = 0;
+        let totalValue = 0;
 
         const html = await Promise.all(portfolio.map(async (p) => {
-          const quote = quotes[p.ticker];
+          const quote = data.quotes.find(q => q.ticker === p.ticker);
           const currentPrice = quote?.price || p.buyPrice;
           const cost = p.shares * p.buyPrice;
           const value = p.shares * currentPrice;
           const profit = value - cost;
-          const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
+          const profitPercent = (profit / cost) * 100;
           
           totalCost += cost;
-          totalProfit += profit;
+          totalValue += value;
 
           const isProfit = profit >= 0;
           
@@ -1279,145 +1091,38 @@
                   </div>
                 </div>
               </div>
-              <div style="display:flex;gap:8px;">
-                <button onclick="sellStock('${p.ticker}', ${p.shares})" style="flex:1;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;">全部賣出</button>
-                <button onclick="showSellDialog('${p.ticker}', ${p.shares}, ${currentPrice})" style="flex:1;padding:10px;background:var(--bg);border:none;border-radius:8px;font-size:13px;">部分賣出</button>
-              </div>
+              <button onclick="removeFromPortfolio('${p.ticker}')" style="padding:8px 12px;background:var(--bg);border:none;border-radius:8px;font-size:12px;">移除</button>
             </div>
           `;
         }));
 
-        const currentPortfolioValue = portfolio.reduce((sum, p) => {
-          const quote = quotes[p.ticker];
-          return sum + (p.shares * (quote?.price || p.buyPrice));
-        }, 0);
-        const currentProfit = currentPortfolioValue - totalCost;
-        const currentProfitPercent = totalCost > 0 ? (currentProfit / totalCost) * 100 : 0;
-        const isProfit = currentProfit >= 0;
+        const totalProfit = totalValue - totalCost;
+        const totalProfitPercent = (totalProfit / totalCost) * 100;
+        const isTotalProfit = totalProfit >= 0;
 
         container.innerHTML = `
-          <!-- 資產總覽 -->
           <div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff;">
-            <div style="font-size:14px;opacity:0.8;">💰 總資產</div>
-            <div style="font-size:28px;font-weight:700;">$${currentPortfolioValue.toLocaleString('en-US', {minimumFractionDigits:2})}</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;font-size:13px;">
-              <div>
-                <div style="opacity:0.7;">現金</div>
-                <div>$${cash.toLocaleString('en-US', {minimumFractionDigits:2})}</div>
-              </div>
-              <div>
-                <div style="opacity:0.7;">總盈虧</div>
-                <div style="color:${isProfit ? '#4ADE80' : '#F87171'}">
-                  ${isProfit ? '+' : ''}$${currentProfit.toFixed(2)} (${isProfit ? '+' : ''}${currentProfitPercent.toFixed(1)}%)
-                </div>
-              </div>
+            <div style="font-size:14px;opacity:0.8;">總資產</div>
+            <div style="font-size:28px;font-weight:700;">$${totalValue.toLocaleString('en-US', {minimumFractionDigits:2})}</div>
+            <div style="font-size:16px;margin-top:8px;${isTotalProfit ? 'color:#4ADE80' : 'color:#F87171'}">
+              ${isTotalProfit ? '+' : ''}$${totalProfit.toFixed(2)} (${isTotalProfit ? '+' : ''}${totalProfitPercent.toFixed(2)}%)
             </div>
           </div>
-          
           ${html.join('')}
-          
           <button class="action-btn primary" onclick="showAddPortfolioDialog()" style="margin-top:16px;">
-            ➕ 買入股票
+            ➕ 添加持倉
           </button>
-          
-          ${transactions.length > 0 ? `
-          <div style="margin-top:24px;">
-            <div style="font-size:16px;font-weight:600;margin-bottom:12px;">📜 交易記錄</div>
-            ${transactions.slice(-5).reverse().map(t => `
-              <div style="padding:10px 12px;background:var(--card);border-radius:8px;margin-bottom:8px;font-size:13px;">
-                <div style="display:flex;justify-content:space-between;">
-                  <span>${t.type === 'buy' ? '🟢 買入' : '🔴 賣出'} ${t.ticker}</span>
-                  <span>${t.type === 'buy' ? '-' : '+'}$${(t.type === 'buy' ? t.cost : t.revenue).toFixed(2)}</span>
-                </div>
-                <div style="color:var(--text-secondary);font-size:12px;margin-top:4px;">
-                  ${t.shares} 股 @ $${t.price?.toFixed(2)} | ${new Date(t.date).toLocaleDateString()}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-          ` : ''}
         `;
       } catch (error) {
         container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗</div></div>';
       }
     }
 
-    function showSellDialog(ticker, shares, currentPrice) {
-      const dialog = document.createElement('div');
-      dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:500;display:flex;align-items:center;justify-content:center;';
-      dialog.innerHTML = `
-        <div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:320px;">
-          <div style="font-size:18px;font-weight:600;margin-bottom:16px;">賣出 ${ticker}</div>
-          <div style="font-size:14px;color:var(--text-secondary);margin-bottom:16px;">當前價格: $${currentPrice?.toFixed(2) || '-'} | 可賣: ${shares} 股</div>
-          <input type="number" id="sellShares" placeholder="賣出股數" max="${shares}" 
-            style="width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;margin-bottom:16px;">
-          <button onclick="doSell('${ticker}')" 
-            style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;">
-            確認賣出
-          </button>
-          <button onclick="this.closest('[style*=\'position:fixed\']').remove()"
-            style="width:100%;padding:12px;background:var(--bg);border:none;border-radius:10px;font-size:14px;margin-top:10px;">取消</button>
-        </div>
-      `;
-      document.body.appendChild(dialog);
-      
-      window.doSell = function() {
-        const sellShares = parseInt(document.getElementById('sellShares').value);
-        if (sellShares > 0 && sellShares <= shares) {
-          sellStock(ticker, sellShares);
-          dialog.remove();
-        } else {
-          showToast('請輸入有效的股數');
-        }
-      };
-    }
-
-    function sellStock(ticker, shares) {
-      const holding = portfolio.find(p => p.ticker === ticker);
-      if (!holding) return;
-      
-      fetch('/api/quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker })
-      }).then(r => r.json()).then(quote => {
-        if (!quote.success) {
-          showToast('無法獲取當前價格');
-          return;
-        }
-        
-        const currentPrice = quote.price;
-        const sellShares = Math.min(shares, holding.shares);
-        const revenue = sellShares * currentPrice;
-        const profit = (currentPrice - holding.buyPrice) * sellShares;
-        
-        // 更新持倉
-        holding.shares -= sellShares;
-        if (holding.shares <= 0) {
-          portfolio = portfolio.filter(p => p.ticker !== ticker);
-        }
-        
-        // 記錄交易
-        transactions.push({ 
-          type: 'sell', ticker, shares: sellShares, price: currentPrice, revenue, profit, date: Date.now() 
-        });
-        
-        // 增加現金
-        cash += revenue;
-        
-        localStorage.setItem('stock_portfolio', JSON.stringify(portfolio));
-        localStorage.setItem('stock_transactions', JSON.stringify(transactions));
-        localStorage.setItem('stock_cash', cash.toString());
-        
-        const profitText = profit >= 0 ? `賺 $${profit.toFixed(2)}` : `虧 $${Math.abs(profit).toFixed(2)}`;
-        showToast(`✅ 已賣出 ${ticker} ${sellShares} 股，${profitText}`);
-        
-        renderPortfolio();
-      });
-    }
-
     function removeFromPortfolio(ticker) {
-      showToast('請使用「賣出」功能');
+      portfolio = portfolio.filter(p => p.ticker !== ticker);
+      localStorage.setItem('stock_portfolio', JSON.stringify(portfolio));
+      renderPortfolio();
+      showToast(`已移除 ${ticker}`);
     }
 
     function loadHistory(ticker, type) {

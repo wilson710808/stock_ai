@@ -15,12 +15,98 @@ const PORT = process.env.PORT || 3001;
 const config = {
   apiKey: process.env.OPENAI_API_KEY,
   baseUrl: process.env.OPENAI_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-  model: process.env.OPENAI_MODEL || 'meta/llama-3.1-405b-instruct'
+  model: process.env.OPENAI_MODEL || 'meta/llama-3.1-405b-instruct',
+  alphaVantageKey: process.env.ALPHA_VANTAGE_KEY || 'demo'
 };
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Alpha Vantage K 線數據
+async function fetchAlphaVantageHistorical(ticker) {
+  if (!config.alphaVantageKey || config.alphaVantageKey === 'demo') {
+    return null;
+  }
+  
+  try {
+    // 獲取每日 K 線數據
+    const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${config.alphaVantageKey}&outputsize=compact`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    const timeSeries = data['Time Series (Daily)'];
+    if (!timeSeries) return null;
+    
+    const candles = Object.entries(timeSeries).slice(0, 90).reverse().map(([date, values]) => ({
+      time: Math.floor(new Date(date).getTime() / 1000), // TradingView 需要 Unix 秒
+      open: parseFloat(values['1. open']),
+      high: parseFloat(values['2. high']),
+      low: parseFloat(values['3. low']),
+      close: parseFloat(values['4. close']),
+      volume: parseInt(values['5. volume'])
+    }));
+    
+    return candles;
+  } catch (e) {
+    console.error('Alpha Vantage Historical error:', e.message);
+    return null;
+  }
+}
+
+// K 線 API
+app.get('/api/chart/:ticker', async (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
+  
+  const candles = await fetchAlphaVantageHistorical(ticker);
+  
+  if (candles) {
+    return res.json({ success: true, candles, source: 'alphavantage' });
+  }
+  
+  // 返回模擬數據（說明需要 API Key）
+  res.json({ 
+    success: false, 
+    error: '需要 Alpha Vantage API Key 來獲取 K 線數據',
+    hint: '請在 .env 中設置 ALPHA_VANTAGE_KEY'
+  });
+});
+
+// 嘗試使用 Alpha Vantage API
+async function fetchAlphaVantage(ticker) {
+  if (!config.alphaVantageKey || config.alphaVantageKey === 'demo') {
+    return null; // 使用備用數據
+  }
+  
+  try {
+    const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${config.alphaVantageKey}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    if (data['Global Quote'] && data['Global Quote']['05. price']) {
+      const q = data['Global Quote'];
+      return {
+        ticker: q['01. symbol'],
+        price: parseFloat(q['05. price']),
+        change: parseFloat(q['09. change']),
+        changePercent: parseFloat(q['10. change percent']?.replace('%', '') || 0),
+        prevClose: parseFloat(q['08. previous close']),
+        open: parseFloat(q['02. open']),
+        high: parseFloat(q['03. high']),
+        low: parseFloat(q['04. low']),
+        volume: parseInt(q['06. volume']),
+        timestamp: new Date().toISOString(),
+        source: 'alphavantage',
+        note: '實時數據 (Alpha Vantage)'
+      };
+    }
+    return null;
+  } catch (e) {
+    console.error('Alpha Vantage error:', e.message);
+    return null;
+  }
+}
 
 // 系統提示
 const SYSTEM_PROMPT = `你是一位擁有 30 年華爾街經驗的資深美股投資顧問，曾任職高盛、摩根士丹利。
@@ -96,16 +182,21 @@ app.post('/api/quote', async (req, res) => {
   
   const t = ticker.trim().toUpperCase();
   
-  // 先嘗試 Python 爬蟲
-  const pythonResult = await getStockPricePython(t);
-  
-  if (pythonResult && pythonResult.price) {
-    pythonResult.source = 'realtime';
-    pythonResult.note = '實時數據';
-    return res.json(pythonResult);
+  // Step 1: 嘗試 Alpha Vantage (優先)
+  const alphaResult = await fetchAlphaVantage(t);
+  if (alphaResult && alphaResult.price) {
+    return res.json({ success: true, ...alphaResult });
   }
   
-  // 使用模擬數據
+  // Step 2: 嘗試 Python 爬蟲
+  const pythonResult = await getStockPricePython(t);
+  if (pythonResult && pythonResult.price) {
+    pythonResult.source = 'python';
+    pythonResult.note = '實時數據';
+    return res.json({ success: true, ...pythonResult });
+  }
+  
+  // Step 3: 使用模擬數據
   const data = stockData[t];
   if (data) {
     return res.json({
@@ -127,7 +218,7 @@ app.post('/api/quote', async (req, res) => {
       fiftyTwoWeekLow: data.week52Low,
       timestamp: Date.now(),
       source: 'demo',
-      note: '模擬數據（實時 API 不可用）'
+      note: '模擬數據（建議配置 Alpha Vantage API）'
     });
   }
   
