@@ -638,3 +638,78 @@ app.listen(PORT, () => {
   console.log(`🔑 API: ${config.apiKey ? '已配置' : '未配置'}`);
   console.log(`🤖 模型: ${config.model}`);
 });
+
+// 分析记录保存 API
+app.post('/api/save-analysis', (req, res) => {
+  const { ticker, type, content, quote, conclusion } = req.body;
+  const fs = require('fs');
+  const path = require('path');
+  
+  const today = new Date().toISOString().split('T')[0];
+  const record = {
+    timestamp: new Date().toISOString(),
+    ticker,
+    type,
+    content,
+    quote,
+    conclusion
+  };
+  
+  // 保存到记忆区域
+  const memoryDir = path.join(__dirname, '..', 'memory', 'analysis');
+  if (!fs.existsSync(memoryDir)) {
+    fs.mkdirSync(memoryDir, { recursive: true });
+  }
+  
+  const filename = `${today}_${ticker}_${type}.json`;
+  fs.writeFileSync(path.join(memoryDir, filename), JSON.stringify(record, null, 2));
+  
+  // 同时追加到每日汇总
+  const summaryFile = path.join(__dirname, '..', 'memory', `analysis_${today}.md`);
+  const summaryEntry = `
+## ${new Date().toLocaleTimeString('zh-TW')} - ${ticker} (${type})
+
+### 核心结论
+${conclusion || '无'}
+
+### 关键数据
+- 价格: ${quote?.price ? '$' + quote.price : '-'}
+- 涨跌: ${quote?.changePercent ? quote.changePercent + '%' : '-'}
+
+---
+`;
+  
+  if (fs.existsSync(summaryFile)) {
+    fs.appendFileSync(summaryFile, summaryEntry);
+  } else {
+    fs.writeFileSync(summaryFile, `# ${today} 分析记录\n${summaryEntry}`);
+  }
+  
+  res.json({ success: true, filename });
+});
+
+// 获取历史分析记录
+app.get('/api/analysis-history', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  
+  const memoryDir = path.join(__dirname, '..', 'memory', 'analysis');
+  if (!fs.existsSync(memoryDir)) {
+    return res.json({ success: true, records: [] });
+  }
+  
+  const files = fs.readdirSync(memoryDir)
+    .filter(f => f.endsWith('.json'))
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, 20);
+  
+  const records = files.map(f => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(memoryDir, f), 'utf8'));
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  
+  res.json({ success: true, records });
+});

@@ -675,12 +675,33 @@
 
         renderResult(ticker, currentType, data.content, quote);
         addToHistory(ticker, currentType);
+        
+        // 保存分析记录到记忆区域
+        saveAnalysisRecord(ticker, currentType, data.content, quote);
+        
         showToast('分析完成！');
 
       } catch (error) {
         showToast(error.message || '發生錯誤');
       } finally {
         loading.classList.remove('show');
+      }
+    }
+    
+    // 保存分析记录
+    async function saveAnalysisRecord(ticker, type, content, quote) {
+      try {
+        // 提取核心结论
+        const conclusionMatch = content.match(/\*\*最終建議：\*\* (.*)/);
+        const conclusion = conclusionMatch ? conclusionMatch[1] : '';
+        
+        await fetch('/api/save-analysis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker, type, content, quote, conclusion })
+        });
+      } catch (e) {
+        console.error('保存分析记录失败:', e);
       }
     }
 
@@ -891,6 +912,17 @@ function renderResult(ticker, type, content, quote) {
       const badge = document.getElementById('chartBadge');
       if (!chartEl) return;
       
+      // 检查 LightweightCharts 是否加载
+      if (typeof LightweightCharts === 'undefined') {
+        chartEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary);">K線圖庫載入中...</div>';
+        // 等待库加载
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (typeof LightweightCharts === 'undefined') {
+          chartEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary);">⚠️ K線圖庫載入失敗，請重新整理頁面</div>';
+          return;
+        }
+      }
+      
       try {
         const res = await fetch('/api/chart/' + ticker);
         const data = await res.json();
@@ -909,11 +941,6 @@ function renderResult(ticker, type, content, quote) {
             timeScale: { borderColor: '#e5e7eb' }
           });
           
-          // 收盤價線
-          const lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
-          const cdata = data.candles.map(c => ({ time: c.time, value: c.close }));
-          lineSeries.setData(cdata);
-          
           // K 線
           const candlestickSeries = chart.addCandlestickSeries({
             upColor: '#26a69a',
@@ -924,21 +951,6 @@ function renderResult(ticker, type, content, quote) {
             wickDownColor: '#ef5350'
           });
           candlestickSeries.setData(data.candles);
-          
-          // 成交量柱
-          const volumeSeries = chart.addHistogramSeries({
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: 'volume'
-          });
-          chart.priceScale('volume').applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 }
-          });
-          volumeSeries.setData(data.candles.map(c => ({
-            time: c.time,
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)'
-          })));
           
           chart.timeScale().fitContent();
           badge.textContent = '✅ 實時數據';
