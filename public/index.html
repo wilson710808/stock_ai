@@ -1229,6 +1229,10 @@ function renderResult(ticker, type, content, quote) {
                       <span style="color:var(--text-secondary);font-size:11px;margin-left:8px;">
                         ${analysis?.date ? new Date(analysis.date).toLocaleDateString() : ''}
                       </span>
+                      <button onclick="event.stopPropagation();showAnalysisHistory('${q.ticker}', 'watchlist')" 
+                        style="margin-left:8px;padding:2px 8px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer;">
+                        查看詳情
+                      </button>
                     </div>
                   ` : ''}
                 </div>
@@ -1250,15 +1254,20 @@ function renderResult(ticker, type, content, quote) {
 
     async function batchAnalyzeWatchlist(type = 'signal') {
       const selected = Array.from(document.querySelectorAll('.watchlist-check:checked')).map(cb => cb.value);
+      if (selected.length === 0) { showToast('請先選擇股票'); return; }
+      await runBatchAnalysis(selected, type, 'watchlist');
+      renderWatchlist();
+    }
+
+    // 通用批量分析函数（带进度条）
+    async function runBatchAnalysis(tickers, type, mode) {
+      const total = tickers.length;
+      let completed = 0;
       
-      if (selected.length === 0) {
-        showToast('請先選擇股票');
-        return;
-      }
+      // 显示进度条
+      showProgressBar(`分析中... (0/${total})`);
       
-      showToast('開始分析...');
-      
-      for (const ticker of selected) {
+      for (const ticker of tickers) {
         try {
           const res = await fetch('/api/analyze', {
             method: 'POST',
@@ -1279,22 +1288,85 @@ function renderResult(ticker, type, content, quote) {
               if (match) recommendation = match[1].trim();
             }
             
-            watchlistAnalysis[ticker] = {
+            const analysis = {
               recommendation,
               date: Date.now(),
               type,
               content: data.content
             };
             
-            localStorage.setItem('stock_watchlist_analysis', JSON.stringify(watchlistAnalysis));
-            showToast(`✅ ${ticker} 分析完成`);
+            if (mode === 'watchlist') {
+              watchlistAnalysis[ticker] = analysis;
+              localStorage.setItem('stock_watchlist_analysis', JSON.stringify(watchlistAnalysis));
+            } else if (mode === 'portfolio') {
+              portfolioAnalysis[ticker] = analysis;
+              localStorage.setItem('stock_portfolio_analysis', JSON.stringify(portfolioAnalysis));
+            }
           }
         } catch (e) {
           console.error(ticker + ' 分析失败:', e);
         }
+        
+        completed++;
+        updateProgressBar(`分析中... (${completed}/${total})`, completed / total);
       }
       
-      renderWatchlist();
+      hideProgressBar();
+      showToast('✅ 分析完成！');
+    }
+
+    // 进度条函数
+    function showProgressBar(text) {
+      let bar = document.getElementById('progressBar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'progressBar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(90deg,var(--accent),#4ADE80);padding:12px;color:#fff;font-size:14px;text-align:center;transition:width 0.3s;';
+        document.body.appendChild(bar);
+      }
+      bar.innerHTML = `<div style="background:rgba(255,255,255,0.3);border-radius:4px;height:6px;"><div id="progressFill" style="background:#fff;height:6px;border-radius:4px;width:0%;transition:width 0.3s;"></div></div><div style="margin-top:8px;">${text}</div>`;
+      bar.style.display = 'block';
+    }
+
+    function updateProgressBar(text, percent) {
+      const bar = document.getElementById('progressBar');
+      const fill = document.getElementById('progressFill');
+      if (bar) bar.querySelector('div:last-child').textContent = text;
+      if (fill) fill.style.width = (percent * 100) + '%';
+    }
+
+    function hideProgressBar() {
+      const bar = document.getElementById('progressBar');
+      if (bar) setTimeout(() => { bar.style.display = 'none'; }, 500);
+    }
+
+    // 查看历史分析对话框
+    function showAnalysisHistory(ticker, mode) {
+      const analysis = mode === 'watchlist' ? watchlistAnalysis[ticker] : portfolioAnalysis[ticker];
+      if (!analysis) { showToast('暫無分析記錄'); return; }
+      
+      const dialog = document.createElement('div');
+      dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;overflow:auto;';
+      dialog.innerHTML = `
+        <div style="background:#fff;margin:20px;padding:20px;border-radius:12px;max-width:600px;margin:auto;position:relative;top:50%;transform:translateY(-50%);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="margin:0;">📊 ${ticker} 分析記錄</h3>
+            <button onclick="this.closest('[style*=\'position:fixed\']').remove()" style="background:none;border:none;font-size:24px;cursor:pointer;">×</button>
+          </div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">
+            分析時間：${new Date(analysis.date).toLocaleString()}<br>
+            分析類型：${analysis.type}
+          </div>
+          <div style="background:var(--bg);padding:16px;border-radius:8px;max-height:400px;overflow:auto;font-size:14px;line-height:1.6;">
+            ${analysis.content.replace(/\n/g, '<br>')}
+          </div>
+          <button onclick="this.closest('[style*=\'position:fixed\']').remove()" 
+            style="width:100%;margin-top:16px;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;">
+            關閉
+          </button>
+        </div>
+      `;
+      document.body.appendChild(dialog);
     }
 
     function loadFromWatchlist(ticker) {
@@ -1555,6 +1627,10 @@ function renderResult(ticker, type, content, quote) {
                     <div style="margin-top:8px;padding:6px 10px;background:var(--bg);border-radius:6px;font-size:12px;">
                       <span style="font-weight:600;">建議：</span>
                       <span style="${recClass}">${recommendation}</span>
+                      <button onclick="event.stopPropagation();showAnalysisHistory('${p.ticker}', 'portfolio')" 
+                        style="margin-left:8px;padding:2px 8px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer;">
+                        查看詳情
+                      </button>
                     </div>
                   ` : ''}
                   <div style="display:flex;gap:6px;margin-top:8px;">
@@ -1597,50 +1673,8 @@ function renderResult(ticker, type, content, quote) {
 
     async function batchAnalyzePortfolio(type = 'signal') {
       const selected = Array.from(document.querySelectorAll('.portfolio-check:checked')).map(cb => cb.value);
-      
-      if (selected.length === 0) {
-        showToast('請先選擇持倉');
-        return;
-      }
-      
-      showToast('開始分析...');
-      
-      for (const ticker of selected) {
-        try {
-          const res = await fetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticker, type })
-          });
-          
-          const data = await res.json();
-          
-          if (data.success) {
-            let recommendation = '';
-            if (data.content.includes('最終建議')) {
-              const match = data.content.match(/\*\*最終建議：\*\* (.*?)(?:\n|$)/);
-              if (match) recommendation = match[1].trim();
-            }
-            if (!recommendation && data.content.includes('當前建議')) {
-              const match = data.content.match(/\*\*當前建議：\*\* (.*?)(?:\n|$)/);
-              if (match) recommendation = match[1].trim();
-            }
-            
-            portfolioAnalysis[ticker] = {
-              recommendation,
-              date: Date.now(),
-              type,
-              content: data.content
-            };
-            
-            localStorage.setItem('stock_portfolio_analysis', JSON.stringify(portfolioAnalysis));
-            showToast('✅ ' + ticker + ' 分析完成');
-          }
-        } catch (e) {
-          console.error(ticker + ' 分析失败:', e);
-        }
-      }
-      
+      if (selected.length === 0) { showToast('請先選擇持倉'); return; }
+      await runBatchAnalysis(selected, type, 'portfolio');
       renderPortfolio();
     }
 
