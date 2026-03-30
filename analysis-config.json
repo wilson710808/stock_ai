@@ -1,0 +1,59 @@
+{
+  "analysisTypes": [
+    {
+      "id": "overview",
+      "label": "價值評估",
+      "icon": "🏰",
+      "description": "巴菲特/芒格综合价值分析",
+      "enabled": true,
+      "order": 1
+    },
+    {
+      "id": "fundamental",
+      "label": "財務分析",
+      "icon": "💰",
+      "description": "详细财务数据分析",
+      "enabled": true,
+      "order": 2
+    },
+    {
+      "id": "technical",
+      "label": "技術面",
+      "icon": "📈",
+      "description": "技术指标和趋势分析",
+      "enabled": true,
+      "order": 3
+    },
+    {
+      "id": "risk",
+      "label": "風險評估",
+      "icon": "⚠️",
+      "description": "风险点分析",
+      "enabled": true,
+      "order": 4
+    },
+    {
+      "id": "signal",
+      "label": "操作建議",
+      "icon": "🎯",
+      "description": "买卖信号",
+      "enabled": true,
+      "order": 5
+    },
+    {
+      "id": "signal6m",
+      "label": "6個月建議",
+      "icon": "📅",
+      "description": "6个月投资周期建议",
+      "enabled": false,
+      "order": 6,
+      "note": "仅在自选/持仓批量分析中使用"
+    }
+  ],
+  "pages": [
+    { "id": "home", "label": "首頁", "icon": "🏠", "enabled": true },
+    { "id": "chat", "label": "提問", "icon": "💬", "enabled": true },
+    { "id": "portfolio", "label": "持倉", "icon": "💼", "enabled": true },
+    { "id": "watchlist", "label": "自選", "icon": "⭐", "enabled": true }
+  ]
+}

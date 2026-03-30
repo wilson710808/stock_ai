@@ -664,14 +664,52 @@
       if (page === 'watchlist') renderWatchlist();
     }
 
-    // Analysis Type
-    document.querySelectorAll('.type-btn').forEach(btn => {
-      btn.onclick = () => {
-        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentType = btn.dataset.type;
-      };
-    });
+    // 插拔式：从 API 动态加载分析类型
+    async function loadAnalysisTypes() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (!data.success) return;
+        
+        const types = data.config.analysisTypes
+          .filter(t => t.enabled)
+          .sort((a, b) => a.order - b.order);
+        
+        const container = document.querySelector('.analysis-types');
+        if (!container) return;
+        
+        container.innerHTML = types.map((t, i) => `
+          <button class="type-btn ${i === 0 ? 'active' : ''}" data-type="${t.id}" title="${t.description}">
+            <span class="type-icon">${t.icon}</span>${t.label}
+          </button>
+        `).join('');
+        
+        // 重新绑定事件
+        container.querySelectorAll('.type-btn').forEach(btn => {
+          btn.onclick = () => {
+            container.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentType = btn.dataset.type;
+          };
+        });
+        
+        // 设置默认类型
+        if (types.length > 0) currentType = types[0].id;
+        
+      } catch (e) {
+        // 加载失败时使用静态按钮
+        document.querySelectorAll('.type-btn').forEach(btn => {
+          btn.onclick = () => {
+            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentType = btn.dataset.type;
+          };
+        });
+      }
+    }
+    
+    // 页面加载时初始化
+    loadAnalysisTypes();
 
     // Search
     async function analyze() {

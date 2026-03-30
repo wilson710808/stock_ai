@@ -148,6 +148,16 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', hasAPI: !!config.apiKey, model: config.model });
 });
 
+// 插拔式：返回可用分析类型配置
+app.get('/api/config', (req, res) => {
+  try {
+    const cfg = JSON.parse(require('fs').readFileSync(path.join(__dirname, 'analysis-config.json'), 'utf8'));
+    res.json({ success: true, config: cfg });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // 嘗試獲取實時股價（Python 爬蟲）
 function getStockPricePython(ticker) {
   return new Promise((resolve) => {
