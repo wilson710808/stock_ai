@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 3001;
 const config = {
   apiKey: process.env.OPENAI_API_KEY,
   baseUrl: process.env.OPENAI_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-  model: process.env.OPENAI_MODEL || 'meta/llama-3.1-8b-instruct',
+  model: process.env.OPENAI_MODEL || 'meta/llama-3.1-405b-instruct',
   alphaVantageKey: process.env.ALPHA_VANTAGE_KEY || 'demo'
 };
 
