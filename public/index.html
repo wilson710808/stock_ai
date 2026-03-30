@@ -1081,8 +1081,12 @@ function renderResult(ticker, type, content, quote) {
 
     async function renderWatchlist() {
       const container = document.getElementById('watchlistCards');
+      
+      // 重新读取 localStorage
+      watchlist = JSON.parse(localStorage.getItem('stock_watchlist') || '[]');
+      
       if (!watchlist.length) {
-        container.innerHTML = '<div class="empty"><div class="empty-icon">⭐</div><div class="empty-text">在首頁分析股票後，點擊加入自選</div></div>';
+        container.innerHTML = '<div class="empty"><div class="empty-icon">⭐</div><div class="empty-text">在首頁分析股票後，點擊「加入自選」</div></div>';
         return;
       }
 
@@ -1101,20 +1105,15 @@ function renderResult(ticker, type, content, quote) {
 
         if (!data.success) throw new Error('獲取失敗');
 
-        // 檢查價格提醒
-        priceAlerts.forEach(alert => {
-          const quote = data.quotes.find(q => q.ticker === alert.ticker && q.success);
-          if (quote) {
-            if (alert.type === 'above' && quote.price >= alert.price) {
-              showToast(`🔔 ${alert.ticker} 漲破 $${alert.price}！`);
-            } else if (alert.type === 'below' && quote.price <= alert.price) {
-              showToast(`🔔 ${alert.ticker} 跌至 $${alert.price}！`);
-            }
-          }
-        });
+        // 过滤成功的报价
+        const validQuotes = data.quotes.filter(q => q.success);
+        
+        if (validQuotes.length === 0) {
+          container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">無法獲取報價</div></div>';
+          return;
+        }
 
-        container.innerHTML = data.quotes.map(q => {
-          if (!q.success) return '';
+        container.innerHTML = validQuotes.map(q => {
           const isUp = q.change >= 0;
           return `
             <div class="result-card" onclick="loadFromWatchlist('${q.ticker}')" style="cursor:pointer">
@@ -1136,7 +1135,7 @@ function renderResult(ticker, type, content, quote) {
 
       } catch (error) {
         console.error('自选股加载失败:', error);
-        container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗，請檢查網絡連接</div></div>';
+        container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗：' + error.message + '</div></div>';
       }
     }
 
