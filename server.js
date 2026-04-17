@@ -11,13 +11,18 @@ const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// 配置
+// 配置 - 多模型降級機制
 const config = {
-  // 使用 OpenRouter 免費模型（無需 API Key）
-  apiKey: process.env.OPENAI_API_KEY || 'sk-or-v1-demo',
-  baseUrl: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
-  model: process.env.OPENAI_MODEL || 'meta-llama/llama-3.1-8b-instruct:free',
-  alphaVantageKey: process.env.ALPHA_VANTAGE_KEY || 'demo'
+  apiKey: process.env.OPENAI_API_KEY || '',
+  baseUrl: process.env.OPENAI_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+  model: process.env.OPENAI_MODEL || 'meta/llama-3.1-8b-instruct',
+  alphaVantageKey: process.env.ALPHA_VANTAGE_KEY || 'demo',
+  // 降級模型列表（按優先順序）
+  fallbackModels: [
+    { url: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-8b-instruct', key: process.env.OPENAI_API_KEY },
+    { url: 'https://integrate.api.nvidia.com/v1', model: 'nvidia/llama-3.1-nemotron-70b-instruct', key: process.env.OPENAI_API_KEY },
+  ],
+  aiTimeout: 30000, // 30秒超時（8B模型只需幾秒）
 };
 
 app.use(cors());
@@ -859,46 +864,74 @@ XXX
   }
 
   try {
-    // 设置 120 秒超时
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    // 多模型降級呼叫
+    let content = null;
+    let usedModel = null;
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-      'HTTP-Referer': 'https://stockai.local',
-      'X-Title': 'StockAI'
-    };
+    // 構建嘗試列表：主模型 + 備用模型
+    const tryModels = [
+      { url: config.baseUrl, model: config.model, key: config.apiKey },
+      ...config.fallbackModels.filter(m => m.model !== config.model)
+    ];
 
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: prompts[type] || prompts.chat }
-        ],
-        temperature: 0.7,
-        max_tokens: 2000
-      })
-    });
+    for (const m of tryModels) {
+      if (!m.key) continue;
+      try {
+        console.log(`🔄 嘗試模型: ${m.model} @ ${m.url}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), config.aiTimeout);
 
-    clearTimeout(timeoutId);
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${m.key}`,
+          'HTTP-Referer': 'https://stockai.local',
+          'X-Title': 'StockAI'
+        };
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`API ${response.status}: ${err}`);
+        const response = await fetch(`${m.url}/chat/completions`, {
+          method: 'POST',
+          signal: controller.signal,
+          headers,
+          body: JSON.stringify({
+            model: m.model,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: prompts[type] || prompts.chat }
+            ],
+            temperature: 0.7,
+            max_tokens: 2000
+          })
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const err = await response.text();
+          console.log(`❌ 模型 ${m.model} 返回 ${response.status}: ${err.substring(0, 100)}`);
+          continue; // 嘗試下一個模型
+        }
+
+        const data = await response.json();
+        content = data.choices?.[0]?.message?.content;
+        usedModel = m.model;
+        console.log(`✅ 模型 ${m.model} 成功`);
+        break; // 成功就跳出
+      } catch (err) {
+        console.log(`❌ 模型 ${m.model} 失敗: ${err.message}`);
+        continue; // 嘗試下一個
+      }
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '無回應';
-    
-    res.json({ success: true, content, ticker, type });
+    if (content) {
+      res.json({ success: true, content, ticker, type, model: usedModel });
+    } else {
+      // 所有模型都失敗，使用本地備用分析
+      console.log('⚠️ 所有模型失敗，使用本地備用分析');
+      const fallbackContent = generateFallbackAnalysis(ticker, type);
+      res.json({ success: true, content: fallbackContent, ticker, type, fallback: true });
+    }
   } catch (error) {
     console.error('Analyze error:', error.message);
-    // 當 API 失敗時，使用本地備用分析
     const fallbackContent = generateFallbackAnalysis(ticker, type);
     res.json({ success: true, content: fallbackContent, ticker, type, fallback: true });
   }
@@ -916,41 +949,59 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    const controller2 = new AbortController();
-    const timeoutId2 = setTimeout(() => controller2.abort(), 120000);
+    // 多模型降級呼叫
+    let content = null;
+    let usedModel = null;
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-      'HTTP-Referer': 'https://stockai.local',
-      'X-Title': 'StockAI'
-    };
+    const tryModels = [
+      { url: config.baseUrl, model: config.model, key: config.apiKey },
+      ...config.fallbackModels.filter(m => m.model !== config.model)
+    ];
 
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller2.signal,
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          ...chatMessages
-        ],
-        temperature: 0.7,
-        max_tokens: 2500
-      })
-    });
+    for (const m of tryModels) {
+      if (!m.key) continue;
+      try {
+        const controller2 = new AbortController();
+        const timeoutId2 = setTimeout(() => controller2.abort(), config.aiTimeout);
 
-    clearTimeout(timeoutId2);
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '無回應';
-    
-    res.json({ success: true, content });
-  } catch (error) {
-    // 當 API 失敗時返回友好提示
-    res.json({ 
-      success: true, 
-      content: `抱歉，AI 分析服務暫時不可用（${error.message}）。
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${m.key}`,
+          'HTTP-Referer': 'https://stockai.local',
+          'X-Title': 'StockAI'
+        };
+
+        const response = await fetch(`${m.url}/chat/completions`, {
+          method: 'POST',
+          signal: controller2.signal,
+          headers,
+          body: JSON.stringify({
+            model: m.model,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              ...chatMessages
+            ],
+            temperature: 0.7,
+            max_tokens: 2500
+          })
+        });
+
+        clearTimeout(timeoutId2);
+        const data = await response.json();
+        content = data.choices?.[0]?.message?.content;
+        usedModel = m.model;
+        break;
+      } catch (err) {
+        continue;
+      }
+    }
+
+    if (content) {
+      res.json({ success: true, content, model: usedModel });
+    } else {
+      res.json({ 
+        success: true, 
+        content: `抱歉，AI 分析服務暫時不可用。
 
 請稍後重試，或嘗試以下替代方案：
 1. 刷新頁面後重新搜索
@@ -958,6 +1009,13 @@ app.post('/api/chat', async (req, res) => {
 3. 參考其他專業財經網站
 
 **免責聲明：** 本系統提供的分析僅供參考，不構成投資建議。`,
+        fallback: true
+      });
+    }
+  } catch (error) {
+    res.json({ 
+      success: true, 
+      content: `抱歉，AI 服務暫時不可用。請稍後重試。`,
       fallback: true
     });
   }
