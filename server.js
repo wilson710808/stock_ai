@@ -21,7 +21,7 @@ const APP_ID = process.env.APP_ID || 'stock-ai';
  * 透過 AI Gateway 發送 AI 請求
  * Gateway 負責 API Key 池化、速率限制、負載均衡
  */
-async function gatewayChat(messages, userId = 'stock-ai-user') {
+async function gatewayChat(messages, userId = 'Wilson') {
   // Gateway 需要 query_data 作為主輸入，messages 提供上下文
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   const queryData = lastUserMsg ? lastUserMsg.content : '';
@@ -923,7 +923,7 @@ XXX
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: prompts[type] || prompts.chat }
     ];
-    const aiResponse = await gatewayChat(aiMessages, `analyze-${ticker}`);
+    const aiResponse = await gatewayChat(aiMessages);
 
     if (aiResponse) {
       res.json({ success: true, content: aiResponse, ticker, type, model: 'gateway' });
@@ -955,7 +955,7 @@ app.post('/api/chat', async (req, res) => {
       { role: 'system', content: SYSTEM_PROMPT },
       ...chatMessages
     ];
-    const aiResponse = await gatewayChat(aiMessages, `chat-${Date.now()}`);
+    const aiResponse = await gatewayChat(aiMessages);
 
     if (aiResponse) {
       res.json({ success: true, content: aiResponse, model: 'gateway' });
