@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>StockAI - 美股投顧助手</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js?v=1774713986673"></script>
-  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" onerror="this.onerror=null;this.src='marked.min.js'"></script>
+  <script async src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js" onerror="this.onerror=null;this.src='lightweight-charts.min.js'"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -633,6 +633,7 @@
   <div class="toast" id="toast"></div>
 
   <script>
+window.onerror=function(m,s,l,c,e){alert("JS Error: "+m+"\nLine: "+l);return false};
     // State
     let currentType = 'overview';
     let currentTicker = '';

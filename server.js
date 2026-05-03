@@ -21,40 +21,61 @@ const APP_ID = process.env.APP_ID || 'stock-ai';
  * 透過 AI Gateway 發送 AI 請求
  * Gateway 負責 API Key 池化、速率限制、負載均衡
  */
-async function gatewayChat(messages, userId = 'Wilson') {
+async function gatewayChat(messages, userId = 'Wilson', retries = 1) {
   // Gateway 需要 query_data 作為主輸入，messages 提供上下文
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   const queryData = lastUserMsg ? lastUserMsg.content : '';
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 35000); // 35s (Gateway 內部 30s + 緩衝)
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 40000); // 40s
 
-  try {
-    const response = await fetch(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: APP_ID,
-        user_id: userId,
-        query_data: queryData,
-        messages: messages,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    try {
+      const response = await fetch(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_id: APP_ID,
+          user_id: userId,
+          query_data: queryData,
+          messages: messages,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Gateway HTTP ${response.status}: ${errText.substring(0, 200)}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        // 如果是 500 (Gateway timeout)，重試
+        if (response.status === 500 && attempt < retries) {
+          console.log(`[Gateway] 重試 ${attempt + 1}/${retries}...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        throw new Error(`Gateway HTTP ${response.status}: ${errText.substring(0, 200)}`);
+      }
+
+      const data = await response.json();
+      if (!data.success) {
+        if (attempt < retries) {
+          console.log(`[Gateway] 回覆失敗，重試 ${attempt + 1}/${retries}...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        throw new Error(data.error || 'Gateway 回覆失敗');
+      }
+      return data.response;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt < retries && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+        console.log(`[Gateway] 超時，重試 ${attempt + 1}/${retries}...`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+      if (attempt === retries) throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.error || 'Gateway 回覆失敗');
-    }
-    return data.response;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
