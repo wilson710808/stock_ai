@@ -11,6 +11,88 @@ const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// HTTP CONNECT 代理工具 — 讓 Node.js 通過 en1 繞過 VPN 訪問 NVIDIA API
+const net = require('net');
+const tls = require('tls');
+const PROXY_HOST = '127.0.0.1';
+const PROXY_PORT = 18080;
+
+function createProxyFetch() {
+  return async function proxyFetch(targetUrl, options = {}) {
+    const urlObj = new URL(targetUrl);
+    const targetHost = urlObj.hostname;
+    const targetPort = parseInt(urlObj.port) || (urlObj.protocol === 'https:' ? 443 : 80);
+    const isHttps = urlObj.protocol === 'https:';
+    const method = options.method || 'GET';
+    const headers = { ...options.headers };
+    const body = options.body ? JSON.stringify(options.body) : undefined;
+
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(PROXY_PORT, PROXY_HOST, () => {
+        socket.write('CONNECT ' + targetHost + ':' + targetPort + ' HTTP/1.1\r\nHost: ' + targetHost + '\r\n\r\n');
+      });
+
+      socket.on('data', (chunk) => {
+        const str = chunk.toString();
+        if (str.includes('200')) {
+          try {
+            let stream;
+            if (isHttps) {
+              stream = tls.connect({
+                host: targetHost, port: targetPort, socket: socket,
+                rejectUnauthorized: false
+              });
+            } else {
+              stream = socket;
+            }
+
+            // 構造 HTTP 請求
+            let reqStr = method + ' ' + urlObj.pathname + urlObj.search + ' HTTP/1.1\r\n' +
+              'Host: ' + targetHost + '\r\n' +
+              'Content-Type: application/json\r\n';
+            if (body) reqStr += 'Content-Length: ' + Buffer.byteLength(body) + '\r\n';
+            if (headers['Authorization']) reqStr += 'Authorization: ' + headers['Authorization'] + '\r\n';
+            if (headers['HTTP-Referer']) reqStr += 'HTTP-Referer: ' + headers['HTTP-Referer'] + '\r\n';
+            if (headers['X-Title']) reqStr += 'X-Title: ' + headers['X-Title'] + '\r\n';
+            reqStr += 'Connection: close\r\n\r\n';
+            if (body) reqStr += body;
+
+            stream.once('error', reject);
+            stream.write(reqStr);
+
+            const respBuf = [];
+            stream.on('data', (c) => respBuf.push(c));
+            stream.on('end', () => {
+              const raw = respBuf.join('');
+              const bodyIdx = raw.indexOf('\r\n\r\n');
+              if (bodyIdx === -1) { reject(new Error('Invalid response')); return; }
+              const bodyText = raw.substring(bodyIdx + 4);
+              const statusLine = raw.split('\r\n')[0];
+              const status = parseInt(statusLine.split(' ')[1]);
+              resolve({
+                ok: status >= 200 && status < 300,
+                status, statusText: statusLine.substring(statusLine.indexOf(' ') + 1),
+                headers: { get: () => '' },
+                json: () => Promise.resolve(JSON.parse(bodyText)),
+                text: () => Promise.resolve(bodyText)
+              });
+            });
+          } catch (e) { reject(e); }
+          socket.removeAllListeners('error');
+        } else {
+          reject(new Error('Proxy refused: ' + str));
+          socket.destroy();
+        }
+      });
+
+      socket.on('error', reject);
+      socket.setTimeout(30000, () => { reject(new Error('proxy timeout')); socket.destroy(); });
+    });
+  };
+}
+
+const proxyFetch = createProxyFetch();
+
 // 配置 - 多模型降級機制
 const config = {
   apiKey: process.env.OPENAI_API_KEY || '',
@@ -888,11 +970,10 @@ XXX
           'X-Title': 'StockAI'
         };
 
-        const response = await fetch(`${m.url}/chat/completions`, {
+        const response = await proxyFetch(`${m.url}/chat/completions`, {
           method: 'POST',
-          signal: controller.signal,
           headers,
-          body: JSON.stringify({
+          body: {
             model: m.model,
             messages: [
               { role: 'system', content: SYSTEM_PROMPT },
@@ -900,7 +981,7 @@ XXX
             ],
             temperature: 0.7,
             max_tokens: 2000
-          })
+          }
         });
 
         clearTimeout(timeoutId);
@@ -971,11 +1052,10 @@ app.post('/api/chat', async (req, res) => {
           'X-Title': 'StockAI'
         };
 
-        const response = await fetch(`${m.url}/chat/completions`, {
+        const response = await proxyFetch(`${m.url}/chat/completions`, {
           method: 'POST',
-          signal: controller2.signal,
           headers,
-          body: JSON.stringify({
+          body: {
             model: m.model,
             messages: [
               { role: 'system', content: SYSTEM_PROMPT },
@@ -983,7 +1063,7 @@ app.post('/api/chat', async (req, res) => {
             ],
             temperature: 0.7,
             max_tokens: 2500
-          })
+          }
         });
 
         clearTimeout(timeoutId2);
