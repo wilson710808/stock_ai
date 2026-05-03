@@ -667,7 +667,7 @@
     // 插拔式：从 API 动态加载分析类型
     async function loadAnalysisTypes() {
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch('api/config');
         const data = await res.json();
         if (!data.success) return;
         
@@ -728,7 +728,7 @@
 
       try {
         // Step 1: 獲取報價
-        const quoteRes = await fetch('/api/quote', {
+        const quoteRes = await fetch('api/quote', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticker })
@@ -743,7 +743,7 @@
         // Step 2: 開始分析
         loading.querySelector('.loading-text').textContent = '🤖 AI 分析師正在分析中...';
         
-        const res = await fetch('/api/analyze', {
+        const res = await fetch('api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticker, type: currentType })
@@ -775,7 +775,7 @@
         const conclusionMatch = content.match(/\*\*最終建議：\*\* (.*)/);
         const conclusion = conclusionMatch ? conclusionMatch[1] : '';
         
-        await fetch('/api/save-analysis', {
+        await fetch('api/save-analysis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticker, type, content, quote, conclusion })
@@ -1004,7 +1004,7 @@ function renderResult(ticker, type, content, quote) {
       }
       
       try {
-        const res = await fetch('/api/chart/' + ticker);
+        const res = await fetch('api/chart/' + ticker);
         const data = await res.json();
         
         if (data.success && data.candles && data.candles.length > 0) {
@@ -1178,7 +1178,7 @@ function renderResult(ticker, type, content, quote) {
       container.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
 
       try {
-        const res = await fetch('/api/quotes', {
+        const res = await fetch('api/quotes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tickers: watchlist })
@@ -1269,7 +1269,7 @@ function renderResult(ticker, type, content, quote) {
       
       for (const ticker of tickers) {
         try {
-          const res = await fetch('/api/analyze', {
+          const res = await fetch('api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ticker, type })
@@ -1443,7 +1443,7 @@ function renderResult(ticker, type, content, quote) {
       if (!holding) return;
       
       // 獲取當前股價
-      fetch('/api/quote', {
+      fetch('api/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker })
@@ -1566,7 +1566,7 @@ function renderResult(ticker, type, content, quote) {
         let quotes = {};
         
         if (tickers.length > 0) {
-          const res = await fetch('/api/quotes', {
+          const res = await fetch('api/quotes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tickers })
@@ -1712,7 +1712,7 @@ function renderResult(ticker, type, content, quote) {
       const holding = portfolio.find(p => p.ticker === ticker);
       if (!holding) return;
       
-      fetch('/api/quote', {
+      fetch('api/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker })
@@ -1782,7 +1782,7 @@ function renderResult(ticker, type, content, quote) {
       chatMessages.scrollTop = chatMessages.scrollHeight;
 
       try {
-        const res = await fetch('/api/chat', {
+        const res = await fetch('api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: [{ role: 'user', content: msg }] })
@@ -1814,7 +1814,7 @@ function renderResult(ticker, type, content, quote) {
       resultDiv.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
 
       try {
-        const res = await fetch('/api/analyze', {
+        const res = await fetch('api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticker: input, type: 'portfolio' })

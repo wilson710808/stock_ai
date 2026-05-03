@@ -30,7 +30,7 @@
 
   <script>
     // 测试 API
-    fetch('/api/health')
+    fetch('api/health')
       .then(r => r.json())
       .then(d => {
         document.getElementById('apiTest').innerHTML = 
@@ -43,7 +43,7 @@
       });
 
     // 测试配置
-    fetch('/api/config')
+    fetch('api/config')
       .then(r => r.json())
       .then(d => {
         const types = d.config.analysisTypes.filter(t => t.enabled).length;
