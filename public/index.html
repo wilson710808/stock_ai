@@ -1836,7 +1836,8 @@ function renderResult(ticker, type, content, quote) {
       }
     }
 
-    document.getElementById('analyzePortfolioBtn').onclick = analyzePortfolio;
+    const analyzePortfolioBtn = document.getElementById('analyzePortfolioBtn');
+if (analyzePortfolioBtn) analyzePortfolioBtn.onclick = analyzePortfolio;
     
     // Portfolio page load
     const portfolioPage = document.getElementById('portfolioPage');
