@@ -244,7 +244,7 @@ app.get('/api/portfolio', (req, res) => {
   const items = stmts.getPortfolio.all(req.user.userId);
   const user = stmts.getUserById.get(req.user.userId);
   const divs = stmts.getDividendsAll.all(req.user.userId);
-  res.json({ success: true, portfolio: items, cash: user.cash, dividends: divs });
+  res.json({ success: true, portfolio: items, dividends: divs });
 });
 
 app.post('/api/portfolio/buy', (req, res) => {
@@ -254,7 +254,7 @@ app.post('/api/portfolio/buy', (req, res) => {
   if (!t || !shares || !price || shares <= 0 || price <= 0) return res.status(400).json({ error: '無效參數' });
   const cost = shares * price;
   const user = stmts.getUserById.get(req.user.userId);
-  if (user.cash < cost) return res.status(400).json({ error: '現金不足！需要 ' + cost.toFixed(2) + '，只有 ' + user.cash.toFixed(2) });
+ // No cash constraint — user can add any position directly
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
  const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   try {
@@ -266,11 +266,11 @@ app.post('/api/portfolio/buy', (req, res) => {
       } else {
  db.prepare('INSERT INTO portfolio (user_id, ticker, shares, buy_price, stop_loss, take_profit, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(req.user.userId, t, shares, price, stop_loss || 0, take_profit || 0, note || '', createdAt);
       }
-      stmts.updateCash.run(user.cash - cost, req.user.userId);
+ // Cash not tracked — positions added directly
  stmts.insertTransaction.run(req.user.userId, 'buy', t, shares, price, cost, createdAt + (note ? ' ' + note : ''));
     });
     tx();
-    res.json({ success: true, cash: user.cash - cost });
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: '買入失敗：' + e.message });
   }

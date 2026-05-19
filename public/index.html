@@ -117,6 +117,7 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 .auth-tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border)}.auth-tab{flex:1;padding:10px;background:none;border:none;font-size:14px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit}.auth-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .auth-switch{font-size:13px;color:var(--text-secondary);text-align:center;margin-top:12px}.auth-switch a{color:var(--accent);cursor:pointer;font-weight:600}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <!-- Header -->
@@ -179,7 +180,7 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 <main class="main page" id="portfolioPage">
  <div class="pf-summary" id="pfSummary"></div>
  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-  <button class="type-btn" onclick="showDepositDialog()" style="flex:1"><span class="type-icon">💰</span>存入資金</button>
+ 
   <button class="type-btn" onclick="showBuyDialog()" style="flex:1"><span class="type-icon">📈</span>買入股票</button>
   <button class="type-btn" onclick="toggleTxPanel()" style="flex:1"><span class="type-icon">📋</span>交易記錄</button>
   <button class="type-btn" onclick="analyzePortfolioAll()" style="flex:1"><span class="type-icon">🤖</span>AI組合分析</button>
