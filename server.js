@@ -249,14 +249,14 @@ app.get('/api/portfolio', (req, res) => {
 
 app.post('/api/portfolio/buy', (req, res) => {
   if (!req.user) return res.status(401).json({ error: '請先登錄' });
-  const { ticker, shares, price, stop_loss, take_profit, note } = req.body;
+  const { ticker, shares, price, stop_loss, take_profit, note, buy_date } = req.body;
   const t = ticker?.toUpperCase();
   if (!t || !shares || !price || shares <= 0 || price <= 0) return res.status(400).json({ error: '無效參數' });
   const cost = shares * price;
   const user = stmts.getUserById.get(req.user.userId);
-  // 用戶沒有預設現金，需先存入或從現有現金扣除
   if (user.cash < cost) return res.status(400).json({ error: '現金不足！需要 ' + cost.toFixed(2) + '，只有 ' + user.cash.toFixed(2) });
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+ const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   try {
     const tx = db.transaction(() => {
       if (existing) {
@@ -264,10 +264,10 @@ app.post('/api/portfolio/buy', (req, res) => {
         const newAvg = (existing.shares * existing.buy_price + shares * price) / newShares;
         stmts.updatePortfolio.run(newShares, newAvg, stop_loss || existing.stop_loss, take_profit || existing.take_profit, note || existing.note, req.user.userId, t);
       } else {
-        stmts.insertPortfolio.run(req.user.userId, t, shares, price, stop_loss || 0, take_profit || 0, note || '');
+ db.prepare('INSERT INTO portfolio (user_id, ticker, shares, buy_price, stop_loss, take_profit, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(req.user.userId, t, shares, price, stop_loss || 0, take_profit || 0, note || '', createdAt);
       }
       stmts.updateCash.run(user.cash - cost, req.user.userId);
-      stmts.insertTransaction.run(req.user.userId, 'buy', t, shares, price, cost, note || '');
+ stmts.insertTransaction.run(req.user.userId, 'buy', t, shares, price, cost, createdAt + (note ? ' ' + note : ''));
     });
     tx();
     res.json({ success: true, cash: user.cash - cost });
@@ -282,6 +282,7 @@ app.post('/api/portfolio/sell', (req, res) => {
   const t = ticker?.toUpperCase();
   if (!t || !shares || !price || shares <= 0) return res.status(400).json({ error: '無效參數' });
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+ const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   if (shares > existing.shares) return res.status(400).json({ error: '賣出股數超過持倉' });
   const revenue = shares * price;
@@ -310,6 +311,7 @@ app.put('/api/portfolio/:ticker/sltp', (req, res) => {
   const t = req.params.ticker?.toUpperCase();
   const { stop_loss, take_profit } = req.body;
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+ const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   stmts.updatePortfolio.run(existing.shares, existing.buy_price, stop_loss || 0, take_profit || 0, existing.note, req.user.userId, t);
   res.json({ success: true });
@@ -320,6 +322,7 @@ app.put('/api/portfolio/:ticker/note', (req, res) => {
   const t = req.params.ticker?.toUpperCase();
   const { note } = req.body;
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+ const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   stmts.updatePortfolio.run(existing.shares, existing.buy_price, existing.stop_loss, existing.take_profit, note || '', req.user.userId, t);
   res.json({ success: true });
