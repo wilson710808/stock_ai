@@ -5,9 +5,27 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const CORS_ORIGINS = process.env.CORS_ORIGINS || '';
 const path = require('path');
 const { spawn } = require('child_process');
+const { db, stmts } = require('./db');
+const { hashPassword, verifyPassword, signJWT, verifyJWT, authMiddleware, JWT_EXPIRY } = require('./auth');
+
+// 行業分類映射
+const SECTOR_MAP = {
+  'AAPL':'科技','MSFT':'科技','NVDA':'科技','AMD':'科技','GOOGL':'科技','GOOG':'科技',
+  'META':'通訊','NFLX':'通訊','DIS':'通訊','T':'通訊','VZ':'通訊','CMCSA':'通訊',
+  'AMZN':'消費','TSLA':'消費','WMT':'消費','COST':'消費','NKE':'消費','SBUX':'消費','MCD':'消費','TGT':'消費',
+  'JPM':'金融','V':'金融','BRK.B':'金融','GS':'金融','MS':'金融','BAC':'金融','AXP':'金融','C':'金融',
+  'UNH':'醫療','JNJ':'醫療','PFE':'醫療','MRK':'醫療','ABBV':'醫療','LLY':'醫療','MRNA':'醫療',
+  'XOM':'能源','CVX':'能源','COP':'能源','SLB':'能源',
+  'CAT':'工業','BA':'工業','HON':'工業','GE':'工業','MMM':'工業','UPS':'工業',
+  'LIN':'材料','APD':'材料','SHW':'材料','ECL':'材料',
+  'PLD':'地產','AMT':'地產','EQIX':'地產','SPG':'地產',
+  'NEE':'公用','DUK':'公用','SO':'公用','D':'公用',
+};
+const DEFAULT_SECTORS = ['科技','消費','金融','通訊','醫療','能源','工業','材料','地產','公用'];
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -96,6 +114,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
+app.use(authMiddleware);
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -103,6 +123,383 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ===== 行業分類 API =====
+app.get('/api/sector/:ticker', (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  const sector = SECTOR_MAP[ticker] || '其他';
+  res.json({ ticker, sector });
+});
+
+app.post('/api/sector/batch', (req, res) => {
+  const { tickers } = req.body;
+  if (!Array.isArray(tickers)) return res.status(400).json({ error: '需要 tickers 陣列' });
+  const result = {};
+  tickers.forEach(t => { result[t.toUpperCase()] = SECTOR_MAP[t.toUpperCase()] || '其他'; });
+  res.json({ sectors: result });
+});
+
+// ===== 認證 API =====
+
+// 註冊
+app.post('/api/auth/register', (req, res) => {
+  try {
+    const { username, email, password, display_name } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '用戶名和密碼為必填' });
+    if (username.length < 3) return res.status(400).json({ error: '用戶名至少 3 字元' });
+    if (password.length < 6) return res.status(400).json({ error: '密碼至少 6 字元' });
+    // 檢查是否已存在
+    if (stmts.getUserByUsername.get(username)) return res.status(409).json({ error: '用戶名已存在' });
+    if (email && stmts.getUserByEmail.get(email)) return res.status(409).json({ error: '郵箱已註冊' });
+    const passwordHash = hashPassword(password);
+    const info = stmts.createUser.run(username, email || null, passwordHash, display_name || username);
+    const user = stmts.getUserById.get(info.lastInsertRowid);
+    const token = signJWT({ userId: user.id, username: user.username, role: user.role });
+    res.cookie('token', token, {
+      httpOnly: true,
+      maxAge: JWT_EXPIRY,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true, user: { id: user.id, username: user.username, displayName: user.display_name, role: user.role } });
+  } catch (e) {
+    console.error('註冊失敗:', e.message);
+    res.status(500).json({ error: '註冊失敗：' + e.message });
+  }
+});
+
+// 登錄
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '請輸入用戶名和密碼' });
+    const user = stmts.getUserByUsername.get(username) || (username.includes('@') ? stmts.getUserByEmail.get(username) : null);
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
+      return res.status(401).json({ error: '用戶名或密碼錯誤' });
+    }
+    stmts.updateUserLogin.run(user.id);
+    stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
+    const token = signJWT({ userId: user.id, username: user.username, role: user.role });
+    res.cookie('token', token, {
+      httpOnly: true,
+      maxAge: JWT_EXPIRY,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true, user: { id: user.id, username: user.username, displayName: user.display_name, role: user.role, cash: user.cash } });
+  } catch (e) {
+    console.error('登錄失敗:', e.message);
+    res.status(500).json({ error: '登錄失敗' });
+  }
+});
+
+// 登出
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ success: true });
+});
+
+// 獲取當前用戶
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.json({ loggedIn: false });
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!user) { res.clearCookie('token'); return res.json({ loggedIn: false }); }
+  res.json({
+    loggedIn: true,
+    user: { id: user.id, username: user.username, displayName: user.display_name, email: user.email, role: user.role, cash: user.cash, avatar: user.avatar }
+  });
+});
+
+// 更新個人資料
+app.put('/api/auth/profile', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { display_name, email } = req.body;
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!user) return res.status(404).json({ error: '用戶不存在' });
+  // 檢查郵箱唯一性
+  if (email && email !== user.email) {
+    const existing = stmts.getUserByEmail.get(email);
+    if (existing) return res.status(409).json({ error: '郵箱已被使用' });
+  }
+  stmts.updateProfile.run(display_name || user.display_name, email || user.email, user.settings, req.user.userId);
+  res.json({ success: true });
+});
+
+// 修改密碼
+app.put('/api/auth/password', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { old_password, new_password } = req.body;
+  if (!old_password || !new_password) return res.status(400).json({ error: '請輸入舊密碼和新密碼' });
+  if (new_password.length < 6) return res.status(400).json({ error: '新密碼至少 6 字元' });
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!verifyPassword(old_password, user.password_hash)) return res.status(401).json({ error: '舊密碼錯誤' });
+  stmts.updatePassword.run(hashPassword(new_password), req.user.userId);
+  res.json({ success: true });
+});
+
+// ===== 持倉 API =====
+app.get('/api/portfolio', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const items = stmts.getPortfolio.all(req.user.userId);
+  const user = stmts.getUserById.get(req.user.userId);
+  const divs = stmts.getDividendsAll.all(req.user.userId);
+  res.json({ success: true, portfolio: items, cash: user.cash, dividends: divs });
+});
+
+app.post('/api/portfolio/buy', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, shares, price, stop_loss, take_profit, note } = req.body;
+  const t = ticker?.toUpperCase();
+  if (!t || !shares || !price || shares <= 0 || price <= 0) return res.status(400).json({ error: '無效參數' });
+  const cost = shares * price;
+  const user = stmts.getUserById.get(req.user.userId);
+  // 用戶沒有預設現金，需先存入或從現有現金扣除
+  if (user.cash < cost) return res.status(400).json({ error: '現金不足！需要 ' + cost.toFixed(2) + '，只有 ' + user.cash.toFixed(2) });
+  const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+  try {
+    const tx = db.transaction(() => {
+      if (existing) {
+        const newShares = existing.shares + shares;
+        const newAvg = (existing.shares * existing.buy_price + shares * price) / newShares;
+        stmts.updatePortfolio.run(newShares, newAvg, stop_loss || existing.stop_loss, take_profit || existing.take_profit, note || existing.note, req.user.userId, t);
+      } else {
+        stmts.insertPortfolio.run(req.user.userId, t, shares, price, stop_loss || 0, take_profit || 0, note || '');
+      }
+      stmts.updateCash.run(user.cash - cost, req.user.userId);
+      stmts.insertTransaction.run(req.user.userId, 'buy', t, shares, price, cost, note || '');
+    });
+    tx();
+    res.json({ success: true, cash: user.cash - cost });
+  } catch (e) {
+    res.status(500).json({ error: '買入失敗：' + e.message });
+  }
+});
+
+app.post('/api/portfolio/sell', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, shares, price } = req.body;
+  const t = ticker?.toUpperCase();
+  if (!t || !shares || !price || shares <= 0) return res.status(400).json({ error: '無效參數' });
+  const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+  if (!existing) return res.status(404).json({ error: '無此持倉' });
+  if (shares > existing.shares) return res.status(400).json({ error: '賣出股數超過持倉' });
+  const revenue = shares * price;
+  const profit = (price - existing.buy_price) * shares;
+  try {
+    const tx = db.transaction(() => {
+      const user = stmts.getUserById.get(req.user.userId);
+      if (shares === existing.shares) {
+        stmts.deletePortfolio.run(req.user.userId, t);
+      } else {
+        stmts.updatePortfolio.run(existing.shares - shares, existing.buy_price, existing.stop_loss, existing.take_profit, existing.note, req.user.userId, t);
+      }
+      stmts.updateCash.run(user.cash + revenue, req.user.userId);
+      stmts.insertTransaction.run(req.user.userId, 'sell', t, shares, price, revenue, profit >= 0 ? '盈利 ' + profit.toFixed(2) : '虧損 ' + Math.abs(profit).toFixed(2));
+    });
+    tx();
+    const user = stmts.getUserById.get(req.user.userId);
+    res.json({ success: true, cash: user.cash, profit });
+  } catch (e) {
+    res.status(500).json({ error: '賣出失敗：' + e.message });
+  }
+});
+
+app.put('/api/portfolio/:ticker/sltp', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  const { stop_loss, take_profit } = req.body;
+  const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+  if (!existing) return res.status(404).json({ error: '無此持倉' });
+  stmts.updatePortfolio.run(existing.shares, existing.buy_price, stop_loss || 0, take_profit || 0, existing.note, req.user.userId, t);
+  res.json({ success: true });
+});
+
+app.put('/api/portfolio/:ticker/note', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  const { note } = req.body;
+  const existing = stmts.getPortfolioItem.get(req.user.userId, t);
+  if (!existing) return res.status(404).json({ error: '無此持倉' });
+  stmts.updatePortfolio.run(existing.shares, existing.buy_price, existing.stop_loss, existing.take_profit, note || '', req.user.userId, t);
+  res.json({ success: true });
+});
+
+app.post('/api/portfolio/:ticker/dividend', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  const { amount, date, note } = req.body;
+  if (!amount || amount <= 0) return res.status(400).json({ error: '無效股息金額' });
+  stmts.insertDividend.run(req.user.userId, t, amount, date || new Date().toISOString().split('T')[0], note || '');
+  // 股息加入現金
+  const user = stmts.getUserById.get(req.user.userId);
+  stmts.updateCash.run(user.cash + amount, req.user.userId);
+  stmts.insertTransaction.run(req.user.userId, 'dividend', t, 0, 0, amount, '股息收入');
+  res.json({ success: true });
+});
+
+app.get('/api/portfolio/:ticker/dividends', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  const divs = stmts.getDividends.all(req.user.userId, t);
+  res.json({ success: true, dividends: divs });
+});
+
+// 存入現金（用戶手動存入模擬資金）
+app.post('/api/portfolio/deposit', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { amount } = req.body;
+  if (!amount || amount <= 0) return res.status(400).json({ error: '無效金額' });
+  const user = stmts.getUserById.get(req.user.userId);
+  stmts.updateCash.run(user.cash + amount, req.user.userId);
+  stmts.insertTransaction.run(req.user.userId, 'deposit', '', 0, 0, amount, '存入現金');
+  res.json({ success: true, cash: user.cash + amount });
+});
+
+// ===== 自選股 API =====
+app.get('/api/watchlist', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const items = stmts.getWatchlist.all(req.user.userId);
+  const groups = stmts.getWatchlistGroups.all(req.user.userId);
+  res.json({ success: true, watchlist: items, groups: groups.map(g => g.name) });
+});
+
+app.post('/api/watchlist/add', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, group_name, note, target_buy_price, target_sell_price, priority } = req.body;
+  const t = ticker?.toUpperCase();
+  if (!t) return res.status(400).json({ error: '請提供股票代碼' });
+  try {
+    stmts.insertWatchlist.run(req.user.userId, t, group_name || '', note || '', target_buy_price || 0, target_sell_price || 0, priority || 0);
+    res.json({ success: true });
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: t + ' 已在自選中' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/watchlist/:ticker', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  const { group_name, note, target_buy_price, target_sell_price, priority } = req.body;
+  const existing = stmts.getWatchlistItem.get(req.user.userId, t);
+  if (!existing) return res.status(404).json({ error: '不在自選中' });
+  stmts.updateWatchlist.run(group_name ?? existing.group_name, note ?? existing.note, target_buy_price ?? existing.target_buy_price, target_sell_price ?? existing.target_sell_price, priority ?? existing.priority, req.user.userId, t);
+  res.json({ success: true });
+});
+
+app.delete('/api/watchlist/:ticker', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const t = req.params.ticker?.toUpperCase();
+  stmts.deleteWatchlist.run(req.user.userId, t);
+  res.json({ success: true });
+});
+
+app.post('/api/watchlist/groups', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: '請提供分組名稱' });
+  try {
+    stmts.insertWatchlistGroup.run(req.user.userId, name);
+    res.json({ success: true });
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: '分組已存在' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/watchlist/groups/:name', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const name = decodeURIComponent(req.params.name);
+  stmts.deleteWatchlistGroup.run(req.user.userId, name);
+  res.json({ success: true });
+});
+
+// ===== 價格提醒 API =====
+app.get('/api/alerts', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const alerts = stmts.getAlerts.all(req.user.userId);
+  res.json({ success: true, alerts });
+});
+
+app.post('/api/alerts', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, price, type } = req.body;
+  if (!ticker || !price || !type) return res.status(400).json({ error: '無效參數' });
+  stmts.insertAlert.run(req.user.userId, ticker.toUpperCase(), price, type);
+  res.json({ success: true });
+});
+
+app.delete('/api/alerts/:id', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  stmts.deleteAlert.run(parseInt(req.params.id), req.user.userId);
+  res.json({ success: true });
+});
+
+// ===== 交易記錄 API =====
+app.get('/api/transactions', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const limit = parseInt(req.query.limit) || 100;
+  const txs = stmts.getTransactions.all(req.user.userId, limit);
+  res.json({ success: true, transactions: txs });
+});
+
+// ===== 分析歷史 API =====
+app.get('/api/analysis-history', (req, res) => {
+  if (!req.user) return res.json({ success: true, records: [] });
+  const limit = parseInt(req.query.limit) || 20;
+  const records = stmts.getAnalysisHistory.all(req.user.userId, limit);
+  res.json({ success: true, records });
+});
+
+app.post('/api/analysis-history', (req, res) => {
+  if (!req.user) return res.json({ success: true }); // 未登錄靜默跳過
+  const { ticker, type, content, recommendation } = req.body;
+  stmts.insertAnalysis.run(req.user.userId, ticker, type, content || '', recommendation || '');
+  res.json({ success: true });
+});
+
+// ===== localStorage 遷移 API =====
+app.post('/api/auth/migrate', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { portfolio, watchlist, watchlistGroups, transactions, priceAlerts, dividends, cash } = req.body;
+  try {
+    const tx = db.transaction(() => {
+      // 遷移持倉
+      if (Array.isArray(portfolio)) {
+        portfolio.forEach(p => {
+          const existing = stmts.getPortfolioItem.get(req.user.userId, p.ticker);
+          if (!existing) {
+            stmts.insertPortfolio.run(req.user.userId, p.ticker, p.shares, p.buyPrice, 0, 0, '');
+          }
+        });
+      }
+      // 遷移自選
+      if (Array.isArray(watchlist)) {
+        watchlist.forEach(t => {
+          try { stmts.insertWatchlist.run(req.user.userId, t, '', '', 0, 0, 0); } catch(e) {}
+        });
+      }
+      // 遷移分組
+      if (Array.isArray(watchlistGroups)) {
+        watchlistGroups.forEach(g => {
+          try { stmts.insertWatchlistGroup.run(req.user.userId, g); } catch(e) {}
+        });
+      }
+      // 遷移現金
+      if (typeof cash === 'number' && cash > 0) {
+        const user = stmts.getUserById.get(req.user.userId);
+        stmts.updateCash.run(user.cash + cash, req.user.userId);
+      }
+    });
+    tx();
+    res.json({ success: true, message: '數據遷移完成' });
+  } catch (e) {
+    res.status(500).json({ error: '遷移失敗：' + e.message });
+  }
+});
+
+
 
 // K 線 API（使用 Python Yahoo Finance 爬虫）
 app.get('/api/chart/:ticker', async (req, res) => {

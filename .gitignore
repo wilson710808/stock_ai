@@ -8,3 +8,6 @@ node_modules/
 *.bak*
 .env
 *.log
+stockai.db
+*.db
+stockai.db-*
