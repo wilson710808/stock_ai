@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>StockAI - 清除持倉資料</title>
+<style>
+body{font-family:'Noto Sans TC',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f7fa;color:#1a1a2e}
+.box{text-align:center;background:#fff;padding:40px;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.1);max-width:400px}
+h2{margin-bottom:16px}
+.keys{background:#f5f7fa;padding:12px;border-radius:8px;margin:16px 0;text-align:left;font-size:13px;line-height:1.8}
+button{padding:12px 32px;border:none;border-radius:10px;font-size:16px;cursor:pointer;margin:8px;font-family:inherit}
+.danger{background:#ef4444;color:#fff}
+.cancel{background:#e5e7eb;color:#333}
+.result{margin-top:16px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="box">
+<h2>🗑️ 清除持倉資料</h2>
+<p>將清除以下 localStorage 資料：</p>
+<div class="keys" id="keysList"></div>
+<button class="danger" onclick="doReset()">⚠️ 確認清除全部持倉</button>
+<button class="cancel" onclick="location.href='/'">取消返回</button>
+<div class="result" id="result"></div>
+</div>
+<script>
+const portfolioKeys = [
+  'stock_portfolio',
+  'stock_portfolio_meta',
+  'stock_portfolio_analysis',
+  'stock_transactions',
+  'stock_cash',
+  'stock_alerts',
+  'stock_history'
+];
+const list = document.getElementById('keysList');
+portfolioKeys.forEach(k => {
+  const val = localStorage.getItem(k);
+  const tag = document.createElement('div');
+  tag.textContent = k + (val ? ' ✅ 有資料' : ' ⬜ 空白');
+  list.appendChild(tag);
+});
+function doReset() {
+  if (!confirm('確定要清除所有持倉資料？此操作不可撤銷！')) return;
+  let cleared = 0;
+  portfolioKeys.forEach(k => {
+    if (localStorage.getItem(k)) {
+      localStorage.removeItem(k);
+      cleared++;
+    }
+  });
+  document.getElementById('result').innerHTML = '✅ 已清除 <b>' + cleared + '</b> 筆資料。持倉已重置為初始狀態（現金 $100,000）。';
+  document.getElementById('keysList').innerHTML = portfolioKeys.map(k => '<div>' + k + ' ⬜ 已清除</div>').join('');
+}
+</script>
+</body>
+</html>
