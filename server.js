@@ -532,35 +532,62 @@ app.post('/api/quote', async (req, res) => {
   return res.json({ success: false, error: `股票代碼 ${t} 不存在` });
 });
 
-// 批量報價
+// 批量報價（增強版：優先 Python 爬蟲 → Alpha Vantage → 模擬數據）
 app.post('/api/quotes', async (req, res) => {
   const { tickers } = req.body;
   if (!tickers || !Array.isArray(tickers)) {
     return res.status(400).json({ error: '請提供股票代碼列表' });
   }
-  
   const results = [];
-  for (const t of tickers) {
-    const data = stockData[t.toUpperCase()];
+  const quotePromises = tickers.map(async (t) => {
+    const tu = t.toUpperCase();
+    // Step 1: 嘗試 Python 爬蟲
+    const pythonResult = await getStockPricePython(tu);
+    if (pythonResult && pythonResult.price && !pythonResult.error) {
+      return { success: true, ...pythonResult };
+    }
+    // Step 2: 嘗試 Alpha Vantage
+    const alphaResult = await fetchAlphaVantage(tu);
+    if (alphaResult && alphaResult.price) {
+      return { success: true, ...alphaResult };
+    }
+    // Step 3: 模擬數據
+    const data = stockData[tu];
     if (data) {
-      results.push({
-        success: true,
-        ticker: t.toUpperCase(),
-        name: data.name,
-        price: data.price,
-        change: data.change,
-        changePercent: data.changePercent,
-        prevClose: data.prevClose,
-        volume: data.volume,
-        peRatio: data.pe,
-        source: 'demo'
-      });
+      return { success: true, ticker: tu, name: data.name, price: data.price,
+        change: data.change, changePercent: data.changePercent,
+        prevClose: data.prevClose, volume: data.volume,
+        peRatio: data.pe, source: 'demo' };
+    }
+    return { success: false, ticker: t, error: '不存在' };
+  });
+  const settled = await Promise.allSettled(quotePromises);
+  settled.forEach(r => {
+    results.push(r.status === 'fulfilled' ? r.value : { success: false, ticker: '?', error: r.reason?.message || '獲取失敗' });
+  });
+  res.json({ success: true, quotes: results });
+});
+
+// 市場指數 API（三大指數 + VIX）
+app.get('/api/market/indices', async (req, res) => {
+  const indices = ['SPY', 'QQQ', 'DIA', 'VIX'];
+  const results = [];
+  for (const t of indices) {
+    const r = await getStockPricePython(t);
+    if (r && r.price && !r.error) {
+      results.push({ ticker: t, ...r });
     } else {
-      results.push({ success: false, ticker: t, error: '不存在' });
+      const fallback = {
+        SPY: { name: 'S&P 500', price: 592.50, change: 5.20, changePercent: 0.88 },
+        QQQ: { name: 'Nasdaq 100', price: 518.30, change: -3.10, changePercent: -0.60 },
+        DIA: { name: 'Dow Jones', price: 428.80, change: 1.50, changePercent: 0.35 },
+        VIX: { name: 'VIX 恐慌指數', price: 16.20, change: -0.80, changePercent: -4.71 },
+      };
+      const fb = fallback[t];
+      if (fb) results.push({ ticker: t, ...fb, source: 'demo', timestamp: Date.now() });
     }
   }
-  
-  res.json({ success: true, quotes: results });
+  res.json({ success: true, indices: results });
 });
 
 // 分析 API
