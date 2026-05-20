@@ -11,3 +11,4 @@ node_modules/
 stockai.db
 *.db
 stockai.db-*
+__pycache__/
