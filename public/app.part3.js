@@ -106,7 +106,7 @@ async function analyzePortfolioAll(){
     // 獲取即時報價
     const qr=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});
     const qd=await qr.json();
-    const quotes=qd.success?qd.quotes:{};
+    let quotes={};if(qd.success&&qd.quotes){const qArr=Array.isArray(qd.quotes)?qd.quotes:qd.quotes;qArr.forEach(q=>{if(q.success)quotes[q.ticker]=q});}
     let totalValue=0,totalCost=0;
     const details=portfolio.map(p=>{
       const cp=quotes[p.ticker]?.price||p.buyPrice;

@@ -646,7 +646,9 @@ async function buildUserInvestContext(userId) {
         const resp = await fetch('http://127.0.0.1:3007/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) });
         const qd = await resp.json();
         if (qd.success && qd.quotes) {
-          quotes = qd.quotes;
+        // /api/quotes 返回數組，轉換為 ticker 鍵值對象
+        const qArr = Array.isArray(qd.quotes) ? qd.quotes : Object.values(qd.quotes);
+        qArr.forEach(q => { if (q.success && q.ticker) quotes[q.ticker] = q; });
           console.log('[buildUserInvestContext] Got quotes for:', Object.keys(quotes).join(','));
         } else {
           console.warn('[buildUserInvestContext] quotes response unexpected:', JSON.stringify(qd).substring(0,200));
@@ -1497,9 +1499,11 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
+    // 注入用戶持倉上下文（與分析 API 一致）
+    const userCtx = await buildUserInvestContext(req.user?.userId);
     // 透過 AI Gateway 發送聊天請求
     const aiMessages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT + userCtx },
       ...chatMessages
     ];
     const aiResponse = await gatewayChat(aiMessages);
