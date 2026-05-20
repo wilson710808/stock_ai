@@ -61,7 +61,7 @@ function authMiddleware(req, res, next) {
   if (!req.path.startsWith('/api/')) return next();
 
   // 分析/報價/聊天/K線 — 允許未登錄使用但記錄用戶（如有）
-  const optionalAuthPaths = ['/api/analyze', '/api/quote', '/api/quotes', '/api/chat', '/api/chart/', '/api/save-analysis', '/api/analysis-history'];
+  const optionalAuthPaths = ['/api/analyze', '/api/quote', '/api/quotes', '/api/chat', '/api/chart/', '/api/save-analysis', '/api/analysis-history', '/api/user-context'];
   const isOptional = optionalAuthPaths.some(p => req.path.startsWith(p));
 
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');

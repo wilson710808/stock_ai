@@ -95,16 +95,50 @@ function renderTxPanel(){
   }).join('')
 }
 
-// AI組合分析
+// AI組合分析（基於即時報價計算市值佔比）
 async function analyzePortfolioAll(){
   portfolio=JSON.parse(localStorage.getItem('stock_portfolio')||'[]');
   if(!portfolio.length){showToast('尚無持倉');return}
   const list=$('portfolioList');
-  list.innerHTML+='<div class="loading show" id="pfAILoading"><div class="spinner"></div><div style="text-align:center;padding:16px;color:var(--text-secondary)">🤖 AI 正在分析整個持倉組合...</div></div>';
-  const tickers=portfolio.map(p=>p.ticker);
-  const summary=portfolio.map(p=>p.ticker+': '+p.shares+'股@'+p.buyPrice.toFixed(2)).join(', ');
+  list.innerHTML+='<div class="loading show" id="pfAILoading"><div class="spinner"></div><div style="text-align:center;padding:16px;color:var(--text-secondary)">🤖 AI 正在獲取即時報價並分析持倉...</div></div>';
   try{
-    const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:tickers.join(','),type:'portfolio',question:'請分析以下持倉組合的整體風險、行業集中度、調整建議：'+summary})});
+    const tickers=portfolio.map(p=>p.ticker);
+    // 獲取即時報價
+    const qr=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});
+    const qd=await qr.json();
+    const quotes=qd.success?qd.quotes:{};
+    let totalValue=0,totalCost=0;
+    const details=portfolio.map(p=>{
+      const cp=quotes[p.ticker]?.price||p.buyPrice;
+      const mv=p.shares*cp;
+      const cost=p.shares*p.buyPrice;
+      const pnl=mv-cost;
+      const pnlPct=cost>0?(pnl/cost*100):0;
+      totalValue+=mv;
+      totalCost+=cost;
+      return{t:p.ticker,sh:p.shares,bp:p.buyPrice,cp,mv,cost,pnl,pnlPct};
+    });
+    const totalPnL=totalValue-totalCost;
+    const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;
+    // 構建基於市值佔比的明細
+    let summary='持倉組合明細（基於即時報價，佔比以市值計算）：\n';
+    summary+=`總本金：$${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;
+    summary+=`總市值：$${totalValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;
+    summary+=`總損益：$${totalPnL.toFixed(2)} (${totalPnLPct>=0?'+':''}${totalPnLPct.toFixed(2)}%)\n\n`;
+    summary+='| 股票 | 持股 | 成本均價 | 現價 | 本金 | 市值 | 佔比 | 損益金額 | 損益比例 |\n';
+    summary+='|------|------|----------|------|------|------|------|----------|----------|\n';
+    details.sort((a,b)=>b.mv-a.mv).forEach(d=>{
+      const w=totalValue>0?(d.mv/totalValue*100):0;
+      summary+=`| ${d.t} | ${d.sh}股 | $${d.bp.toFixed(2)} | $${d.cp.toFixed(2)} | $${d.cost.toFixed(2)} | $${d.mv.toFixed(2)} | ${w.toFixed(1)}% | $${d.pnl.toFixed(2)} | ${d.pnlPct>=0?'+':''}${d.pnlPct.toFixed(2)}% |\n`;
+    });
+    summary+='\n請基於以上**真實市值佔比數據**進行分析，重點關注：\n';
+    summary+='1. 個股佔比是否合理（單股>30%屬過度集中）\n';
+    summary+='2. 行業集中度風險\n';
+    summary+='3. 具體加倉/減倉/提倉建議（請引用實際佔比數字）\n';
+    summary+='4. 是否需要新增新的個股標的以分散風險\n';
+    summary+='5. 組合整體風險評估和優化方向\n';
+    summary+='6. 請在最後提供一段總結，明確指出每支個股的加倉/減倉/提倉/新增建議';
+    const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:tickers.join(','),type:'portfolio',question:summary})});
     const d=await r.json();
     const ld=$('pfAILoading');if(ld)ld.remove();
     if(d.success){
@@ -152,7 +186,7 @@ async function renderPortfolio(){
       '<div class="pf-alloc"><div style="font-size:12px;opacity:0.7;margin-bottom:8px">持倉佔比</div>'+
       portfolio.map(p=>{
         const v=p.shares*(quotes[p.ticker]?.price||p.buyPrice);
-        const pct=totalAssets>0?(v/totalAssets*100):0;
+        const pct=totalValue>0?(v/totalValue*100):0;
         const colors=['#22c55e','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4'];
         const ci=portfolio.indexOf(p)%colors.length;
         return '<div class="pf-alloc-item"><span style="width:50px">'+p.ticker+'</span><div class="pf-alloc-bar"><div class="pf-alloc-fill" style="width:'+pct+'%;background:'+colors[ci]+'"></div></div><span class="pf-alloc-pct">'+pct.toFixed(1)+'%</span></div>'
@@ -160,12 +194,29 @@ async function renderPortfolio(){
       (cash>0?'<div class="pf-alloc-item"><span style="width:50px">現金</span><div class="pf-alloc-bar"><div class="pf-alloc-fill" style="width:'+(totalAssets>0?cash/totalAssets*100:0)+'%;background:#9ca3af"></div></div><span class="pf-alloc-pct">'+(totalAssets>0?cash/totalAssets*100:0).toFixed(1)+'%</span></div>':'')+
       '</div>';
 
+// 健康度計算（基於市值佔比，不含現金）
+let healthScore=3;
+const maxRatio=portfolio.length?Math.max(...portfolio.map(p=>{const v=p.shares*(quotes[p.ticker]?.price||p.buyPrice);return v/totalValue})):0;
+if(maxRatio<0.2)healthScore++;
+if(maxRatio<0.3)healthScore++;
+if(portfolio.every(p=>portfolioMeta[p.ticker]?.stopLoss))healthScore++;
+if(portfolio.length>=3)healthScore--;
+if(healthScore>5)healthScore=5;
+if(healthScore<1)healthScore=1;
+let healthDesc="";
+if(healthScore>=5)healthDesc="🟢 組合極度均衡，分散風險表現優異，值得保持";
+else if(healthScore>=4)healthDesc="🟢 組合分散良好，個股集中度可控，可繼續持有";
+else if(healthScore>=3)healthDesc="🟡 組合適中，部分個股佔比偏高，建議關注集中度風險";
+else if(healthScore>=2)healthDesc="🟠 組合偏集中，單一股位影響過大，建議適度減碼分散";
+else healthDesc="🔴 組合高度集中，風險暴露顯著，強烈建議分散持倉";
+summaryEl.innerHTML+='<div class="health-score" style="margin-top:12px;font-size:12px;opacity:.9">持倉健康度: '+'★'.repeat(healthScore)+'☆'.repeat(5-healthScore)+'<div style="margin-top:4px;font-size:11px;opacity:.8;line-height:1.4">'+healthDesc+'</div></div>';
+
     // 持倉卡片
     listEl.innerHTML=portfolio.map(p=>{
       const q=quotes[p.ticker];const cp=q?.price||p.buyPrice;
       const cost=p.shares*p.buyPrice;const value=p.shares*cp;
       const profit=value-cost;const profitPct=cost>0?(profit/cost*100):0;
-      const ratio=totalAssets>0?(value/totalAssets*100):0;
+      const ratio=totalValue>0?(value/totalValue*100):0;
       const up=profit>=0;
       const m=portfolioMeta[p.ticker]||{};
       const chg=q?.change||0;const chgPct=q?.changePercent||0;
