@@ -120,6 +120,65 @@ def get_kline_yahoo(ticker, days=90):
 
 
 # ============================================
+# Stooq.com（免費 CSV 報價，無需 API Key）
+# ============================================
+# 常見股票名稱映射（Stooq 不返回公司名稱，用此表補全）
+_TICKER_NAMES = {
+    "AAPL": "Apple Inc.", "NVDA": "NVIDIA Corporation", "MSFT": "Microsoft Corporation",
+    "TSLA": "Tesla Inc.", "META": "Meta Platforms Inc.", "GOOGL": "Alphabet Inc.",
+    "AMZN": "Amazon.com Inc.", "GOOG": "Alphabet Inc. (Class C)", "BRK.B": "Berkshire Hathaway",
+    "JPM": "JPMorgan Chase & Co.", "V": "Visa Inc.", "UNH": "UnitedHealth Group",
+    "JNJ": "Johnson & Johnson", "WMT": "Walmart Inc.", "XOM": "Exxon Mobil Corporation",
+    "MA": "Mastercard Inc.", "PG": "Procter & Gamble", "HD": "The Home Depot",
+    "CVX": "Chevron Corporation", "MRK": "Merck & Co.", "ABBV": "AbbVie Inc.",
+    "KO": "Coca-Cola Company", "PEP": "PepsiCo Inc.", "COST": "Costco Wholesale",
+    "AVGO": "Broadcom Inc.", "ADBE": "Adobe Inc.", "CRM": "Salesforce Inc.",
+    "AMD": "Advanced Micro Devices", "NFLX": "Netflix Inc.", "INTC": "Intel Corporation",
+    "CSCO": "Cisco Systems", "DIS": "The Walt Disney Company", "BA": "Boeing Company",
+    "PYPL": "PayPal Holdings", "SBUX": "Starbucks Corporation", "NKE": "Nike Inc.",
+    "SPY": "SPDR S&P 500 ETF", "QQQ": "Invesco QQQ Trust", "DIA": "SPDR Dow Jones ETF",
+    "VIX": "CBOE Volatility Index",
+}
+
+def get_quote_stooq(ticker):
+    """Stooq.com CSV 報價 — 最可靠的免費數據源"""
+    try:
+        url = f'https://stooq.com/q/l/?s={ticker.lower()}.us&f=sd2t2ohlcvp&h&e=csv'
+        req = urllib.request.Request(url, headers={'User-Agent': _UA})
+        with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx) as response:
+            data = response.read().decode('utf-8').strip()
+            lines = data.split('\n')
+            if len(lines) < 2:
+                return {'error': 'Stooq: CSV 格式異常'}
+            parts = lines[1].split(',')
+            # parts: Symbol,Date,Time,Open,High,Low,Close,Volume,PrevClose
+            if len(parts) < 9:
+                return {'error': 'Stooq: 數據不完整'}
+            date_s, time_s, open_s, high_s, low_s, close_s, vol_s, prev_s = parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7], parts[8]
+            price = float(close_s)
+            prev_close = float(prev_s)
+            change = round(price - prev_close, 2)
+            change_pct = round(change / prev_close * 100, 2) if prev_close else 0
+            return {
+                'success': True,
+                'ticker': ticker,
+                'name': _TICKER_NAMES.get(ticker, ticker),
+                'price': round(price, 2),
+                'change': change,
+                'changePercent': change_pct,
+                'prevClose': round(prev_close, 2),
+                'open': round(float(open_s), 2),
+                'high': round(float(high_s), 2),
+                'low': round(float(low_s), 2),
+                'volume': int(vol_s),
+                'timestamp': int(datetime.now().timestamp() * 1000),
+                'source': 'stooq',
+                'note': 'Stooq 實時數據'
+            }
+    except Exception as e:
+        return {'error': f'Stooq error: {str(e)}'}
+
+# ============================================
 # Twelve Data（備用，需 API Key）
 # ============================================
 
@@ -222,15 +281,20 @@ def get_simulated_data(ticker):
 # ============================================
 
 def get_quote(ticker):
-    """主流程：Yahoo → Twelve Data → 模擬"""
+    """主流程：Yahoo → Stooq → Twelve Data → 模擬"""
+    # Step 1: Yahoo Finance
     result = get_quote_yahoo(ticker)
     if result.get('success'):
         return result
-    # Yahoo 失敗，嘗試 Twelve Data
+    # Step 2: Stooq（免費無需 API Key，最可靠備用）
+    stooq = get_quote_stooq(ticker)
+    if stooq.get('success'):
+        return stooq
+    # Step 3: Twelve Data（需 API Key，demo 有限制）
     td = get_quote_twelvedata(ticker)
     if td.get('success'):
         return td
-    # 都失敗，用模擬
+    # Step 4: 模擬數據（最後防線）
     return get_simulated_data(ticker)
 
 def get_kline(ticker, days=90):
@@ -258,7 +322,11 @@ if __name__ == '__main__':
         for i, arg in enumerate(sys.argv):
             if arg == '--batch' and i + 1 < len(sys.argv):
                 tickers = [t.strip() for t in sys.argv[i + 1].split(',') if t.strip()]
-                results = get_quotes_yahoo_batch(tickers)
+                # 使用 get_quote 逐個查詢（含 Stooq 備用）
+                results = []
+                for t in tickers:
+                    results.append(get_quote(t))
+                    time.sleep(0.3)  # 避免速率限制
                 print(json.dumps({'success': True, 'quotes': results}))
                 break
     else:
