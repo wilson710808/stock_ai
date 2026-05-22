@@ -3,7 +3,8 @@
 window.onerror=function(m,s,l){console.error("JS Error:",m,"Line:",l);return false};
 let currentType='overview',currentTicker='',chart=null,currentUser=null;
 let history=JSON.parse(localStorage.getItem('stock_history')||'[]');
-let chatHistoryArr=[];
+let chatHistoryArr=JSON.parse(localStorage.getItem('stock_chat_history')||'[]');
+function saveChatHistory(){if(chatHistoryArr.length>100)chatHistoryArr=chatHistoryArr.slice(-100);saveLS('stock_chat_history',chatHistoryArr)}
 // 離線模式
 let offPortfolio=JSON.parse(localStorage.getItem('stock_portfolio')||'[]');
 let offWatchlist=JSON.parse(localStorage.getItem('stock_watchlist')||'[]');
@@ -29,7 +30,7 @@ function getSector(t){return SECTOR_MAP[t.toUpperCase()]||'其他'}
 function closeModal(){const m=document.querySelector('.modal-overlay');if(m)m.remove()}
 function showModal(h){closeModal();const d=document.createElement('div');d.className='modal-overlay';d.innerHTML='<div class="modal-box">'+h+'</div>';d.onclick=e=>{if(e.target===d)closeModal()};d.querySelector('.modal-box').onclick=e=>e.stopPropagation();document.body.appendChild(d)}
 // 頁面切換
-function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));$(p+'Page').classList.add('active');document.querySelector('.nav-item[data-page="'+p+'"]')?.classList.add('active');if(p==='watchlist')renderWatchlist();if(p==='portfolio')renderPortfolio()}
+function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));$(p+'Page').classList.add('active');document.querySelector('.nav-item[data-page="'+p+'"]')?.classList.add('active');if(p==='watchlist')renderWatchlist();if(p==='portfolio')renderPortfolio();if(p==='chat')scrollChatToBottom()}
 // 數據訪問器
 function gPF(){return currentUser?srvPortfolio:offPortfolio}
 function gCash(){return currentUser?srvCash:offCash}
@@ -63,7 +64,7 @@ function renderMarkdown(t){if(typeof marked!=='undefined'){try{return marked.par
 // 首頁分析
 async function analyze(){const t=tickerInput.value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}currentTicker=t;loading.classList.add('show');resultView.classList.remove('show');loading.querySelector('.loading-text').textContent='正在獲取股價數據...';let q=null;try{const qr=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});q=await qr.json();if(q&&q.success)renderQuoteOnly(t,q);loading.querySelector('.loading-text').textContent='🤖 AI 分析師正在分析中...';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType})});const d=await r.json();if(!d.success)throw new Error(d.error||'分析失敗');renderResult(t,currentType,d.content,q);addToHistory(t,currentType);if(currentUser)fetch('api/analysis-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType,content:d.content})}).catch(()=>{});showToast('分析完成！')}catch(e){showToast(e.message||'發生錯誤')}finally{loading.classList.remove('show')}}
 function renderQuoteOnly(t,q){if(!q||!q.success)return;const up=q.change>=0;resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div><div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="font-size:12px;opacity:.7">'+(q.note||'')+'</div></div><div class="loading show" style="background:transparent"><div class="spinner"></div><div class="loading-text">🤖 AI 分析師正在分析中...</div></div>';resultView.classList.add('show')}
-function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;const lc=content.toLowerCase();if(lc.includes('買入')||lc.includes('bullish')||lc.includes('加碼'))rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};else if(lc.includes('賣出')||lc.includes('bearish')||lc.includes('減碼'))rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(lc.includes('持有')||lc.includes('觀望')||lc.includes('中性'))rec={icon:'⏸️',label:'建議持有',cls:'rec-hold'};const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content)+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
+function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;const rm=content.match(/\[RECOMMENDATION:(BUY|HOLD|SELL|AVOID)\]/i);if(rm){const r=rm[1].toUpperCase();if(r==='BUY')rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};else if(r==='SELL')rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(r==='HOLD')rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(r==='AVOID')rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'}}else{const lc=content.toLowerCase();const lastSection=lc.split('最終建議').pop()||lc.split('當前建議').pop()||lc.split('操作結論').pop()||lc.split('綜合評級').pop()||'';if(lastSection.includes('不符合標準')||lastSection.includes('避開')||lastSection.includes('堅決不碰'))rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'};else if(lastSection.includes('賣出')||lastSection.includes('減碼'))rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(lastSection.includes('觀望')||lastSection.includes('持有'))rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(lastSection.includes('買入'))rec={icon:'🚀',label:'建議買入',cls:'rec-buy'}};const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content.replace(/\[RECOMMENDATION:\w+\]\s*/g,''))+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
 async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線圖需要 API Key</div>';bd.textContent='⚠️ 需要 API'}}catch(e){el.innerHTML='<div class="chart-error">載入失敗</div>';bd.textContent='❌ 錯誤'}}
 function backToHome(){resultView.classList.remove('show');renderHistory()}
 function copyResult(){const c=document.querySelector('.result-content');if(c)navigator.clipboard.writeText(c.textContent);showToast('已複製')}
@@ -71,8 +72,107 @@ function askMore(){showPage('chat')}
 function addToHistory(t,type){history=[{ticker:t,type,time:Date.now()},...history.filter(h=>h.ticker!==t)].slice(0,10);saveLS('stock_history',history)}
 function renderHistory(){if(!history.length){historyList.innerHTML='<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">開始分析你的第一支股票</div></div>';return}const tl={overview:'全面',technical:'技術',fundamental:'基本面',risk:'風險',signal:'信號'};historyList.innerHTML=history.map(h=>'<div class="history-item" onclick="loadHistory(\''+h.ticker+'\',\''+h.type+'\')"><div class="history-ticker">'+h.ticker.substring(0,4)+'</div><div class="history-info"><div class="history-title">'+h.ticker+'</div><div class="history-type">'+(tl[h.type]||h.type)+'</div></div><div class="history-arrow">›</div></div>').join('')}
 function loadHistory(t,type){tickerInput.value=t;document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active',b.dataset.type===type));currentType=type;analyze()}
-// Chat
-async function sendChat(){const msg=$('chatInput').value.trim();if(!msg)return;$('chatMessages').innerHTML+='<div class="chat-msg user">'+msg+'</div>';$('chatInput').value='';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;$('chatMessages').innerHTML+='<div class="chat-msg ai">思考中...</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;try{const res=await fetch('api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:msg}]})});const data=await res.json();$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai markdown-body">'+renderMarkdown(data.content)+'</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight}catch(e){$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai">發生錯誤，請稍後再試</div>'}}
+// Chat — 帶上下文、保留歷史、自動滾動、可連續提問
+let chatSending = false;
+
+// 頁面載入時恢復歷史消息到 DOM
+function restoreChatMessages(){
+  const el = $('chatMessages');
+  if(!el) return;
+  el.innerHTML = ''; // 清空靜態初始消息
+  if(!chatHistoryArr.length){
+    // 無歷史，顯示歡迎語
+    const div = document.createElement('div');
+    div.className = 'chat-msg ai';
+    div.textContent = '你好！我是 StockAI 投顧助手。有任何關於美股的問題，歡迎隨時問我！';
+    el.appendChild(div);
+    return;
+  }
+  chatHistoryArr.forEach(m => {
+    const div = document.createElement('div');
+    if(m.role === 'user'){
+      div.className = 'chat-msg user';
+      div.textContent = m.content;
+    } else {
+      div.className = 'chat-msg ai markdown-body';
+      div.innerHTML = renderMarkdown(m.content);
+    }
+    el.appendChild(div);
+  });
+  scrollChatToBottom();
+}
+
+// 頁面初始化時恢復聊天記錄
+restoreChatMessages();
+
+function scrollChatToBottom() {
+  const el = $('chatMessages');
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function appendChatMsg(role, html) {
+  const el = $('chatMessages');
+  if (!el) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  div.innerHTML = html;
+  el.appendChild(div);
+  scrollChatToBottom();
+  return div;
+}
+
+async function sendChat() {
+  const input = $('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  // 顯示用戶消息
+  appendChatMsg('user', escapeHtml(msg));
+  input.value = '';
+  input.focus(); // 保持焦點以便連續輸入
+
+  // 加入上下文歷史
+  chatHistoryArr.push({ role: 'user', content: msg });
+  saveChatHistory();
+
+  // 顯示 AI 思考中
+  const thinkingDiv = appendChatMsg('ai', '<span style="opacity:.6">🤔 思考中...</span>');
+  chatSending = true;
+
+  try {
+    // 傳送完整上下文（最近 20 條）
+    const ctx = chatHistoryArr.slice(-20);
+    const res = await fetch('api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: ctx })
+    });
+    const data = await res.json();
+
+    // 替換思考中 → 實際回覆
+    if (thinkingDiv && thinkingDiv.parentNode) {
+      thinkingDiv.className = 'chat-msg ai markdown-body';
+      thinkingDiv.innerHTML = renderMarkdown(data.content);
+    }
+
+    // 存入上下文
+    chatHistoryArr.push({ role: 'assistant', content: data.content });
+    saveChatHistory();
+  } catch (e) {
+    if (thinkingDiv && thinkingDiv.parentNode) {
+      thinkingDiv.innerHTML = '⚠️ 發生錯誤，請稍後再試';
+    }
+  } finally {
+    chatSending = false;
+    scrollChatToBottom();
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
 // ===== 自選股 =====
 async function toggleWatchlist(t){const tickers=gWL();if(currentUser){if(tickers.includes(t)){await fetch('api/watchlist/'+t,{method:'DELETE'});showToast('已從自選移除')}else{await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});showToast('已添加到自選')}await loadSrvData()}else{const i=offWatchlist.indexOf(t);if(i>-1){offWatchlist.splice(i,1);showToast('已從自選移除')}else{offWatchlist.push(t);showToast('已添加到自選')}saveLS('stock_watchlist',offWatchlist)}renderWatchlist()}
 async function addToWatchlistDirect(){const t=$('wlTickerInput').value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}if(currentUser){const r=await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});const d=await r.json();if(!d.success){showToast(d.error);return}await loadSrvData()}else{if(offWatchlist.includes(t)){showToast(t+' 已在自選中');return}offWatchlist.push(t);saveLS('stock_watchlist',offWatchlist)}$('wlTickerInput').value='';showToast('✅ 已添加 '+t);renderWatchlist()}
@@ -170,7 +270,7 @@ async function loadUserInvestCtx() {
 searchBtn.onclick=analyze;
 tickerInput.onkeypress=e=>{if(e.key==='Enter')analyze()};
 $('chatSend').onclick=sendChat;
-$('chatInput').onkeypress=e=>{if(e.key==='Enter')sendChat()};
+$('chatInput').onkeypress=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}};
 document.querySelectorAll('.nav-item').forEach(btn=>{btn.onclick=()=>showPage(btn.dataset.page)});
 document.querySelectorAll('.chip').forEach(chip=>{chip.onclick=()=>{tickerInput.value=chip.dataset.ticker;analyze()}});
 const wlInput=$('wlTickerInput');
