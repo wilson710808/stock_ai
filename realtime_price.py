@@ -251,6 +251,86 @@ def get_kline_twelvedata(ticker, days=90, apikey='demo'):
 
 
 # ============================================
+# EODHD（免費無需 API Key，demo 即可取 K 線）
+# ============================================
+import os as _os
+import tempfile as _tempfile
+from datetime import timedelta as _timedelta
+
+# 磁盤緩存目錄（避免重複請求）
+_CACHE_DIR = _os.path.join(_tempfile.gettempdir(), 'stockai_kline_cache')
+_os.makedirs(_CACHE_DIR, exist_ok=True)
+
+def _cache_path(ticker, days):
+    return _os.path.join(_CACHE_DIR, f'{ticker}_{days}d.json')
+
+def _read_cache(ticker, days, max_age_seconds=1800):
+    cp = _cache_path(ticker, days)
+    if _os.path.exists(cp):
+        age = time.time() - _os.path.getmtime(cp)
+        if age < max_age_seconds:
+            try:
+                with open(cp, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+    return None
+
+def _write_cache(ticker, days, data):
+    cp = _cache_path(ticker, days)
+    try:
+        with open(cp, 'w') as f:
+            json.dump(data, f)
+    except:
+        pass
+
+def get_kline_eodhd(ticker, days=90):
+    """EODHD K線數據（免費無需 API Key，demo key 即可）
+    緩存 30 分鐘避免重複請求"""
+    cached = _read_cache(ticker, days, max_age_seconds=1800)
+    if cached:
+        cached['cached'] = True
+        return cached
+
+    try:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - _timedelta(days=days + 10)).strftime('%Y-%m-%d')
+        url = f'https://eodhd.com/api/eod/{ticker}.US?from={start_date}&to={end_date}&period=d&api_token=demo&fmt=json'
+        req = urllib.request.Request(url, headers={'User-Agent': _UA})
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx) as response:
+            data = json.loads(response.read().decode())
+
+        if not data or not isinstance(data, list):
+            return {'success': False, 'error': 'EODHD: 無數據返回'}
+
+        candles = []
+        for row in data:
+            dt = datetime.strptime(row['date'], '%Y-%m-%d')
+            ts = int(dt.timestamp())
+            candles.append({
+                'time': ts,
+                'open': round(row['open'], 2),
+                'high': round(row['high'], 2),
+                'low': round(row['low'], 2),
+                'close': round(row['close'], 2),
+                'volume': int(row.get('volume', 0) or 0)
+            })
+
+        result = {
+            'success': True,
+            'ticker': ticker,
+            'candles': candles,
+            'source': 'eodhd',
+            'note': f'EODHD K線 ({len(candles)} 天，免費無需 API Key)'
+        }
+
+        _write_cache(ticker, days, result)
+        return result
+
+    except Exception as e:
+        return {'success': False, 'error': f'EODHD K線錯誤: {str(e)}'}
+
+# ============================================
 # 備用模擬數據（最後防線）
 # ============================================
 
@@ -298,11 +378,58 @@ def get_quote(ticker):
     return get_simulated_data(ticker)
 
 def get_kline(ticker, days=90):
-    """主流程：Yahoo → Twelve Data"""
+    """主流程：EODHD（免費穩定）→ Yahoo → Twelve Data → 模擬 K 線"""
+    # Step 1: EODHD（免費無需 API Key，帶 30 分鐘緩存，最穩定）
+    result = get_kline_eodhd(ticker, days)
+    if result.get('success'):
+        return result
+
+    # Step 2: Yahoo Finance（可能被 429 限制）
     result = get_kline_yahoo(ticker, days)
     if result.get('success'):
         return result
-    return get_kline_twelvedata(ticker, days)
+
+    # Step 3: Twelve Data（demo key 有限制）
+    result = get_kline_twelvedata(ticker, days)
+    if result.get('success'):
+        return result
+
+    # Step 4: 生成模擬 K 線（最後防線）
+    return _get_simulated_kline(ticker, days)
+
+def _get_simulated_kline(ticker, days=90):
+    """模擬 K 線數據（最後防線）"""
+    import random
+    candles = []
+    base = 150.0
+    price = base
+    now = datetime.now()
+    for i in range(days):
+        dt = now - _timedelta(days=days - i)
+        if dt.weekday() >= 5:
+            continue
+        ts = int(dt.timestamp())
+        change_pct = random.uniform(-0.03, 0.03)
+        open_p = price
+        close_p = round(price * (1 + change_pct), 2)
+        high_p = round(max(open_p, close_p) * (1 + random.uniform(0, 0.015)), 2)
+        low_p = round(min(open_p, close_p) * (1 - random.uniform(0, 0.015)), 2)
+        candles.append({
+            'time': ts,
+            'open': round(open_p, 2),
+            'high': high_p,
+            'low': low_p,
+            'close': close_p,
+            'volume': random.randint(10000000, 80000000)
+        })
+        price = close_p
+    return {
+        'success': True,
+        'ticker': ticker,
+        'candles': candles,
+        'source': 'simulated',
+        'note': f'⚠️ 模擬 K 線 ({len(candles)} 天)'
+    }
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

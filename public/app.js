@@ -60,12 +60,68 @@ async function loadAnalysisTypes(){try{const r=await fetch('api/config'),d=await
 function bindTypes(c){if(!c)return;c.querySelectorAll('.type-btn').forEach(b=>{b.onclick=()=>{c.querySelectorAll('.type-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');currentType=b.dataset.type}})}
 loadAnalysisTypes();
 // Markdown
-function renderMarkdown(t){if(typeof marked!=='undefined'){try{return marked.parse(t)}catch(e){}}let h=t;h=h.replace(/## (.*)/g,'<h2 style="font-size:17px;font-weight:700;margin:16px 0 8px;border-bottom:2px solid #00C853;padding-bottom:4px">$1</h2>');h=h.replace(/### (.*)/g,'<h3 style="font-size:15px;font-weight:600;margin:12px 0 6px">$1</h3>');h=h.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');h=h.replace(/^- (.*)$/gm,'<li style="margin:4px 0">$1</li>');h=h.replace(/---/g,'<hr style="border:none;border-top:1px solid #eee;margin:16px 0">');return h}
+// 圓餅圖渲染引擎
+let _pieCounter=0;
+function renderPieCharts(container){
+  if(!container)container=document;
+  const blocks=container.querySelectorAll('.markdown-body');
+  blocks.forEach(block=>{
+    const html=block.innerHTML;
+    if(html.includes('```pie'))return;// hasn't been processed yet
+    // Find pie JSON patterns in the raw content before marked processes them
+  });
+}
+function processPieInContent(content){
+  // Replace \`\`\`pie ... \`\`\` blocks with rendered pie chart HTML
+  let pieId=0;
+  return content.replace(/```pie\n?([\s\S]*?)\n?```/g,(match,jsonStr)=>{
+    try{
+      const d=JSON.parse(jsonStr.trim());
+      const id='pie_auto_'+(pieId++);
+      const canvasId=id+'_c';
+      const labelId=id+'_l';
+      let legendHtml='';
+      if(d.labels&&d.colors){
+        legendHtml=d.labels.map((l,i)=>'<span style="display:inline-block;margin:2px 6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+(d.colors[i]||'#ccc')+'"></span> '+l+'</span>').join('');
+      }
+      // Build a self-rendering SVG pie chart (no external deps)
+      const total=d.values.reduce((a,b)=>a+b,0);
+      let svgParts='';
+      let startAngle=0;
+      const cx=90,cy=90,r=70;
+      d.values.forEach((v,i)=>{
+        const angle=v/total*Math.PI*2;
+        const endAngle=startAngle+angle;
+        const x1=cx+r*Math.cos(startAngle-Math.PI/2);
+        const y1=cy+r*Math.sin(startAngle-Math.PI/2);
+        const x2=cx+r*Math.cos(endAngle-Math.PI/2);
+        const y2=cy+r*Math.sin(endAngle-Math.PI/2);
+        const largeArc=angle>Math.PI?1:0;
+        const color=d.colors&&d.colors[i]?d.colors[i]:'#ccc';
+        const pct=total>0?(v/total*100).toFixed(1):'0';
+        if(v>0){
+          svgParts+='<path d="M'+cx+','+cy+' L'+x1+','+y1+' A'+r+','+r+' 0 '+largeArc+',1 '+x2+','+y2+' Z" fill="'+color+'" stroke="#fff" stroke-width="1"/>';
+          // Label at midpoint
+          const midAngle=startAngle+angle/2;
+          const lx=cx+(r*0.6)*Math.cos(midAngle-Math.PI/2);
+          const ly=cy+(r*0.6)*Math.sin(midAngle-Math.PI/2);
+          if(pct>5)svgParts+='<text x="'+lx+'" y="'+ly+'" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="11" font-weight="bold">'+pct+'%</text>';
+        }
+        startAngle=endAngle;
+      });
+      return '<div style="margin:12px 0;padding:12px;background:#f8fafc;border-radius:8px;text-align:center"><svg width="180" height="180" viewBox="0 0 180 180">'+svgParts+'</svg><div style="margin-top:8px;font-size:12px;text-align:left">'+legendHtml+'</div></div>';
+    }catch(e){
+      return match;
+    }
+  });
+}
+
+function renderMarkdown(t){t=processPieInContent(t);if(typeof marked!=='undefined'){try{return marked.parse(t)}catch(e){}}let h=t;h=h.replace(/## (.*)/g,'<h2 style="font-size:17px;font-weight:700;margin:16px 0 8px;border-bottom:2px solid #00C853;padding-bottom:4px">$1</h2>');h=h.replace(/### (.*)/g,'<h3 style="font-size:15px;font-weight:600;margin:12px 0 6px">$1</h3>');h=h.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');h=h.replace(/^- (.*)$/gm,'<li style="margin:4px 0">$1</li>');h=h.replace(/---/g,'<hr style="border:none;border-top:1px solid #eee;margin:16px 0">');return h}
 // 首頁分析
 async function analyze(){const t=tickerInput.value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}currentTicker=t;loading.classList.add('show');resultView.classList.remove('show');loading.querySelector('.loading-text').textContent='正在獲取股價數據...';let q=null;try{const qr=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});q=await qr.json();if(q&&q.success)renderQuoteOnly(t,q);loading.querySelector('.loading-text').textContent='🤖 AI 分析師正在分析中...';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType})});const d=await r.json();if(!d.success)throw new Error(d.error||'分析失敗');renderResult(t,currentType,d.content,q);addToHistory(t,currentType);if(currentUser)fetch('api/analysis-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType,content:d.content})}).catch(()=>{});showToast('分析完成！')}catch(e){showToast(e.message||'發生錯誤')}finally{loading.classList.remove('show')}}
 function renderQuoteOnly(t,q){if(!q||!q.success)return;const up=q.change>=0;resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div><div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="font-size:12px;opacity:.7">'+(q.note||'')+'</div></div><div class="loading show" style="background:transparent"><div class="spinner"></div><div class="loading-text">🤖 AI 分析師正在分析中...</div></div>';resultView.classList.add('show')}
 function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;const rm=content.match(/\[RECOMMENDATION:(BUY|HOLD|SELL|AVOID)\]/i);if(rm){const r=rm[1].toUpperCase();if(r==='BUY')rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};else if(r==='SELL')rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(r==='HOLD')rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(r==='AVOID')rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'}}else{const lc=content.toLowerCase();const lastSection=lc.split('最終建議').pop()||lc.split('當前建議').pop()||lc.split('操作結論').pop()||lc.split('綜合評級').pop()||'';if(lastSection.includes('不符合標準')||lastSection.includes('避開')||lastSection.includes('堅決不碰'))rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'};else if(lastSection.includes('賣出')||lastSection.includes('減碼'))rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(lastSection.includes('觀望')||lastSection.includes('持有'))rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(lastSection.includes('買入'))rec={icon:'🚀',label:'建議買入',cls:'rec-buy'}};const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content.replace(/\[RECOMMENDATION:\w+\]\s*/g,''))+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
-async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線圖需要 API Key</div>';bd.textContent='⚠️ 需要 API'}}catch(e){el.innerHTML='<div class="chart-error">載入失敗</div>';bd.textContent='❌ 錯誤'}}
+async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線數據暫時無法獲取，請稍後再試</div>';bd.textContent='⚠️ 數據加載中'}}catch(e){el.innerHTML='<div class="chart-error">📊 K 線數據加載失敗，請稍後重試</div>';bd.textContent='❌ 加載失敗'}}
 function backToHome(){resultView.classList.remove('show');renderHistory()}
 function copyResult(){const c=document.querySelector('.result-content');if(c)navigator.clipboard.writeText(c.textContent);showToast('已複製')}
 function askMore(){showPage('chat')}
