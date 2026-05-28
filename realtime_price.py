@@ -10,7 +10,7 @@ import urllib.error
 import ssl
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta as _timedelta
 
 # 全局 SSL context（跳過證書驗證，適用於伺服器環境）
 _ssl_ctx = ssl.create_default_context()
@@ -61,7 +61,7 @@ def get_quote_yahoo(ticker):
         }
     except urllib.error.HTTPError as e:
         if e.code == 429:
-            return {'error': f'Yahoo: 速率限制 (429)，請稍後再試'}
+            return {'error': 'Yahoo: 速率限制 (429)，請稍後再試'}
         return {'error': f'Yahoo HTTP {e.code}'}
     except Exception as e:
         return {'error': f'Yahoo error: {str(e)}'}
@@ -255,7 +255,6 @@ def get_kline_twelvedata(ticker, days=90, apikey='demo'):
 # ============================================
 import os as _os
 import tempfile as _tempfile
-from datetime import timedelta as _timedelta
 
 # 磁盤緩存目錄（避免重複請求）
 _CACHE_DIR = _os.path.join(_tempfile.gettempdir(), 'stockai_kline_cache')
@@ -377,6 +376,7 @@ def get_quote(ticker):
     # Step 4: 模擬數據（最後防線）
     return get_simulated_data(ticker)
 
+
 def get_kline(ticker, days=90):
     """主流程：EODHD（免費穩定）→ Yahoo → Twelve Data → 模擬 K 線"""
     # Step 1: EODHD（免費無需 API Key，帶 30 分鐘緩存，最穩定）
@@ -394,15 +394,25 @@ def get_kline(ticker, days=90):
     if result.get('success'):
         return result
 
-    # Step 4: 生成模擬 K 線（最後防線）
+    # Step 4: 生成模擬 K 線（最後防線），基於當前真實價格
     return _get_simulated_kline(ticker, days)
 
+
 def _get_simulated_kline(ticker, days=90):
-    """模擬 K 線數據（最後防線）"""
+    """模擬 K 線數據（最後防線），基於當前真實價格生成，讓 K 線與當前價格匹配"""
     import random
+    
+    # 首先嘗試獲取當前真實價格作為基準
+    base_price = 150.0
+    try:
+        q = get_quote(ticker)
+        if q.get('success'):
+            base_price = float(q.get('price', base_price))
+    except:
+        pass
+    
     candles = []
-    base = 150.0
-    price = base
+    price = base_price
     now = datetime.now()
     for i in range(days):
         dt = now - _timedelta(days=days - i)
@@ -423,13 +433,21 @@ def _get_simulated_kline(ticker, days=90):
             'volume': random.randint(10000000, 80000000)
         })
         price = close_p
+    
+    # 確保最後一根 K 線的收盤價與當前真實價格一致
+    if candles:
+        candles[-1]['close'] = round(base_price, 2)
+        candles[-1]['high'] = max(candles[-1]['high'], candles[-1]['close'])
+        candles[-1]['low'] = min(candles[-1]['low'], candles[-1]['close'])
+    
     return {
         'success': True,
         'ticker': ticker,
         'candles': candles,
         'source': 'simulated',
-        'note': f'⚠️ 模擬 K 線 ({len(candles)} 天)'
+        'note': f'⚠️ 模擬 K 線 ({len(candles)} 天，基於當前價格)'
     }
+
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
