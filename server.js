@@ -1153,8 +1153,23 @@ app.post('/api/analyze', async (req, res) => {
     return res.status(400).json({ error: '請提供股票代碼或問題' });
   }
 
+  // 獲取K線數據用於分析
+  let klineData = null;
+  if (ticker) {
+    try {
+      const klResp = await fetch('http://127.0.0.1:3007/api/chart/' + ticker);
+      const klData = await klResp.json();
+      if (klData.success && klData.candles && klData.candles.length > 0) {
+        klineData = klData.candles;
+      }
+    } catch (e) {
+      console.log('[Analyze] K線數據獲取失敗:', e.message);
+    }
+  }
+
   const prompts = {
     overview: `
+${klineData ? '## 📊 歷史K線數據摘要（最近30天）' + klineData.slice(-30).map(k => `| ${new Date(k.time * 1000).toLocaleDateString()} | $${k.open} | $${k.high} | $${k.low} | $${k.close} | ${Math.round(k.volume / 1000000)}M |`).join('\n') + '\n' : ''}
 請對 ${ticker} 進行巴菲特/芒格價值投資分析，格式如下：
 
 ## 🏰 經濟護城河分析
@@ -1224,11 +1239,25 @@ app.post('/api/analyze', async (req, res) => {
 
 ## 💰 具體價格建議
 
+**【價格建議規則（非常重要）】**：
+1. 基於上述歷史K線數據中的**關鍵支撐位/阻力位**來提供建議價格
+2. **建議買入價必須接近當前價格或比當前價格低**，不建議在當前價格10倍以上才買入（除非有特殊理由）
+3. **若不符合巴菲特標準（建議避開），就說明不建議買入的理由，不要給出虛假的買入價格**
+
 **【根據建議類型提供具體價格】**：
-- **若建議買入 [RECOMMENDATION:BUY]**：必須提供**目標買入價**（只需要買入價，不需要賣出價）
-- **若建議觀望持有 [RECOMMENDATION:HOLD]**：必須提供**合適的賣出價位**（如果持有的話）
-- **若建議賣出 [RECOMMENDATION:SELL]**：必須提供**建議賣出價**
-- **若建議避開 [RECOMMENDATION:AVOID]**：說明是否有合適的買入價位還是堅決不碰
+- **若建議買入 [RECOMMENDATION:BUY]**：
+  - 提供**目標買入區間**（例如 $1.20-$1.30）
+  - 提供**首筆加倉建議價**（例如 $1.25）
+  - 說明這個價格建議的理由（基於什麼支撐位）
+- **若建議觀望持有 [RECOMMENDATION:HOLD]**：
+  - 提供**合適的加倉價位**（如果想加的話）
+  - 提供**合適的減倉/賣出價位**（如果獲利的話）
+- **若建議賣出 [RECOMMENDATION:SELL]**：
+  - 提供**當前應賣出的理由**
+  - 提供**是否有合適的回補價位**
+- **若建議避開 [RECOMMENDATION:AVOID]**：
+  - 直接說明「不符合巴菲特標準，不建議買入」
+  - 不要給出虛假的「建議買入價」
 
 **【必須】在最後一行單獨輸出以下標記之一（不可省略）：**
 [RECOMMENDATION:BUY]  （適合買入）

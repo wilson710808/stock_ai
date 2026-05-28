@@ -68,8 +68,10 @@ function renderResult(t,type,content,q){const tl={overview:'全面分析',techni
 const conclusionMatch = content.match(/##.*(?:投資結論|最終建議|結論)([\s\S]*?)(?=\n##|$)/i);
 const targetSection = conclusionMatch ? conclusionMatch[0] : content;
 const lc = targetSection.toLowerCase();
-if (lc.includes('不符合標準') || lc.includes('避開') || lc.includes('賣出') || lc.includes('bearish') || lc.includes('減碼')) {
-  rec={icon:'⚠️',label:'建議賣出/避開',cls:'rec-sell'};
+if (lc.includes('不符合標準') || lc.includes('避開') || lc.includes('avoid')) {
+  rec={icon:'🚫',label:'不符合標準（避開）',cls:'rec-sell'};
+} else if (lc.includes('賣出') || lc.includes('bearish') || lc.includes('減碼')) {
+  rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};
 } else if (lc.includes('買入') || lc.includes('bullish') || lc.includes('加碼') || lc.includes('符合標準')) {
   rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};
 } else if (lc.includes('持有') || lc.includes('觀望') || lc.includes('中性')) {
