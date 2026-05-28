@@ -1146,6 +1146,29 @@ app.get('/api/market/indices', async (req, res) => {
   res.json({ success: true, indices: results });
 });
 
+// 推薦股票 API
+app.get('/api/recommend', async (req, res) => {
+  try {
+    const python = spawn('python3', [path.join(__dirname, 'recommend_stocks.py')]);
+    let data = '';
+    python.stdout.on('data', (chunk) => { data += chunk; });
+    python.on('close', (code) => {
+      if (code === 0 && data) {
+        try {
+          const result = JSON.parse(data);
+          res.json(result);
+        } catch (e) {
+          res.json({ success: false, error: '解析失敗' });
+        }
+      } else {
+        res.json({ success: false, error: '獲取失敗' });
+      }
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // 分析 API
 app.post('/api/analyze', async (req, res) => {
   const { ticker, question, type } = req.body;
