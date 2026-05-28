@@ -3,8 +3,7 @@
 window.onerror=function(m,s,l){console.error("JS Error:",m,"Line:",l);return false};
 let currentType='overview',currentTicker='',chart=null,currentUser=null;
 let history=JSON.parse(localStorage.getItem('stock_history')||'[]');
-let chatHistoryArr=JSON.parse(localStorage.getItem('stock_chat_history')||'[]');
-function saveChatHistory(){if(chatHistoryArr.length>100)chatHistoryArr=chatHistoryArr.slice(-100);saveLS('stock_chat_history',chatHistoryArr)}
+let chatHistoryArr=[];
 // 離線模式
 let offPortfolio=JSON.parse(localStorage.getItem('stock_portfolio')||'[]');
 let offWatchlist=JSON.parse(localStorage.getItem('stock_watchlist')||'[]');
@@ -30,7 +29,7 @@ function getSector(t){return SECTOR_MAP[t.toUpperCase()]||'其他'}
 function closeModal(){const m=document.querySelector('.modal-overlay');if(m)m.remove()}
 function showModal(h){closeModal();const d=document.createElement('div');d.className='modal-overlay';d.innerHTML='<div class="modal-box">'+h+'</div>';d.onclick=e=>{if(e.target===d)closeModal()};d.querySelector('.modal-box').onclick=e=>e.stopPropagation();document.body.appendChild(d)}
 // 頁面切換
-function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));$(p+'Page').classList.add('active');document.querySelector('.nav-item[data-page="'+p+'"]')?.classList.add('active');if(p==='watchlist')renderWatchlist();if(p==='portfolio')renderPortfolio();if(p==='chat')scrollChatToBottom()}
+function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));$(p+'Page').classList.add('active');document.querySelector('.nav-item[data-page="'+p+'"]')?.classList.add('active');if(p==='watchlist')renderWatchlist();if(p==='portfolio')renderPortfolio()}
 // 數據訪問器
 function gPF(){return currentUser?srvPortfolio:offPortfolio}
 function gCash(){return currentUser?srvCash:offCash}
@@ -60,175 +59,31 @@ async function loadAnalysisTypes(){try{const r=await fetch('api/config'),d=await
 function bindTypes(c){if(!c)return;c.querySelectorAll('.type-btn').forEach(b=>{b.onclick=()=>{c.querySelectorAll('.type-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');currentType=b.dataset.type}})}
 loadAnalysisTypes();
 // Markdown
-// 圓餅圖渲染引擎
-let _pieCounter=0;
-function renderPieCharts(container){
-  if(!container)container=document;
-  const blocks=container.querySelectorAll('.markdown-body');
-  blocks.forEach(block=>{
-    const html=block.innerHTML;
-    if(html.includes('```pie'))return;// hasn't been processed yet
-    // Find pie JSON patterns in the raw content before marked processes them
-  });
-}
-function processPieInContent(content){
-  // Replace \`\`\`pie ... \`\`\` blocks with rendered pie chart HTML
-  let pieId=0;
-  return content.replace(/```pie\n?([\s\S]*?)\n?```/g,(match,jsonStr)=>{
-    try{
-      const d=JSON.parse(jsonStr.trim());
-      const id='pie_auto_'+(pieId++);
-      const canvasId=id+'_c';
-      const labelId=id+'_l';
-      let legendHtml='';
-      if(d.labels&&d.colors){
-        legendHtml=d.labels.map((l,i)=>'<span style="display:inline-block;margin:2px 6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+(d.colors[i]||'#ccc')+'"></span> '+l+'</span>').join('');
-      }
-      // Build a self-rendering SVG pie chart (no external deps)
-      const total=d.values.reduce((a,b)=>a+b,0);
-      let svgParts='';
-      let startAngle=0;
-      const cx=90,cy=90,r=70;
-      d.values.forEach((v,i)=>{
-        const angle=v/total*Math.PI*2;
-        const endAngle=startAngle+angle;
-        const x1=cx+r*Math.cos(startAngle-Math.PI/2);
-        const y1=cy+r*Math.sin(startAngle-Math.PI/2);
-        const x2=cx+r*Math.cos(endAngle-Math.PI/2);
-        const y2=cy+r*Math.sin(endAngle-Math.PI/2);
-        const largeArc=angle>Math.PI?1:0;
-        const color=d.colors&&d.colors[i]?d.colors[i]:'#ccc';
-        const pct=total>0?(v/total*100).toFixed(1):'0';
-        if(v>0){
-          svgParts+='<path d="M'+cx+','+cy+' L'+x1+','+y1+' A'+r+','+r+' 0 '+largeArc+',1 '+x2+','+y2+' Z" fill="'+color+'" stroke="#fff" stroke-width="1"/>';
-          // Label at midpoint
-          const midAngle=startAngle+angle/2;
-          const lx=cx+(r*0.6)*Math.cos(midAngle-Math.PI/2);
-          const ly=cy+(r*0.6)*Math.sin(midAngle-Math.PI/2);
-          if(pct>5)svgParts+='<text x="'+lx+'" y="'+ly+'" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="11" font-weight="bold">'+pct+'%</text>';
-        }
-        startAngle=endAngle;
-      });
-      return '<div style="margin:12px 0;padding:12px;background:#f8fafc;border-radius:8px;text-align:center"><svg width="180" height="180" viewBox="0 0 180 180">'+svgParts+'</svg><div style="margin-top:8px;font-size:12px;text-align:left">'+legendHtml+'</div></div>';
-    }catch(e){
-      return match;
-    }
-  });
-}
-
-function renderMarkdown(t){t=processPieInContent(t);if(typeof marked!=='undefined'){try{return marked.parse(t)}catch(e){}}let h=t;h=h.replace(/## (.*)/g,'<h2 style="font-size:17px;font-weight:700;margin:16px 0 8px;border-bottom:2px solid #00C853;padding-bottom:4px">$1</h2>');h=h.replace(/### (.*)/g,'<h3 style="font-size:15px;font-weight:600;margin:12px 0 6px">$1</h3>');h=h.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');h=h.replace(/^- (.*)$/gm,'<li style="margin:4px 0">$1</li>');h=h.replace(/---/g,'<hr style="border:none;border-top:1px solid #eee;margin:16px 0">');return h}
+function renderMarkdown(t){if(typeof marked!=='undefined'){try{return marked.parse(t)}catch(e){}}let h=t;h=h.replace(/## (.*)/g,'<h2 style="font-size:17px;font-weight:700;margin:16px 0 8px;border-bottom:2px solid #00C853;padding-bottom:4px">$1</h2>');h=h.replace(/### (.*)/g,'<h3 style="font-size:15px;font-weight:600;margin:12px 0 6px">$1</h3>');h=h.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');h=h.replace(/^- (.*)$/gm,'<li style="margin:4px 0">$1</li>');h=h.replace(/---/g,'<hr style="border:none;border-top:1px solid #eee;margin:16px 0">');return h}
 // 首頁分析
 async function analyze(){const t=tickerInput.value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}currentTicker=t;loading.classList.add('show');resultView.classList.remove('show');loading.querySelector('.loading-text').textContent='正在獲取股價數據...';let q=null;try{const qr=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});q=await qr.json();if(q&&q.success)renderQuoteOnly(t,q);loading.querySelector('.loading-text').textContent='🤖 AI 分析師正在分析中...';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType})});const d=await r.json();if(!d.success)throw new Error(d.error||'分析失敗');renderResult(t,currentType,d.content,q);addToHistory(t,currentType);if(currentUser)fetch('api/analysis-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType,content:d.content})}).catch(()=>{});showToast('分析完成！')}catch(e){showToast(e.message||'發生錯誤')}finally{loading.classList.remove('show')}}
 function renderQuoteOnly(t,q){if(!q||!q.success)return;const up=q.change>=0;resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div><div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="font-size:12px;opacity:.7">'+(q.note||'')+'</div></div><div class="loading show" style="background:transparent"><div class="spinner"></div><div class="loading-text">🤖 AI 分析師正在分析中...</div></div>';resultView.classList.add('show')}
-function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;const rm=content.match(/\[RECOMMENDATION:(BUY|HOLD|SELL|AVOID)\]/i);if(rm){const r=rm[1].toUpperCase();if(r==='BUY')rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};else if(r==='SELL')rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(r==='HOLD')rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(r==='AVOID')rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'}}else{const lc=content.toLowerCase();const lastSection=lc.split('最終建議').pop()||lc.split('當前建議').pop()||lc.split('操作結論').pop()||lc.split('綜合評級').pop()||'';if(lastSection.includes('不符合標準')||lastSection.includes('避開')||lastSection.includes('堅決不碰'))rec={icon:'🚫',label:'不符合標準',cls:'rec-watch'};else if(lastSection.includes('賣出')||lastSection.includes('減碼'))rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};else if(lastSection.includes('觀望')||lastSection.includes('持有'))rec={icon:'⏸️',label:'建議觀望持有',cls:'rec-hold'};else if(lastSection.includes('買入'))rec={icon:'🚀',label:'建議買入',cls:'rec-buy'}};const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content.replace(/\[RECOMMENDATION:\w+\]\s*/g,''))+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
-async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線數據暫時無法獲取，請稍後再試</div>';bd.textContent='⚠️ 數據加載中'}}catch(e){el.innerHTML='<div class="chart-error">📊 K 線數據加載失敗，請稍後重試</div>';bd.textContent='❌ 加載失敗'}}
+function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;
+// 優先查找最終結論部分
+const conclusionMatch = content.match(/##.*(?:投資結論|最終建議|結論)([\s\S]*?)(?=\n##|$)/i);
+const targetSection = conclusionMatch ? conclusionMatch[0] : content;
+const lc = targetSection.toLowerCase();
+if (lc.includes('不符合標準') || lc.includes('避開') || lc.includes('賣出') || lc.includes('bearish') || lc.includes('減碼')) {
+  rec={icon:'⚠️',label:'建議賣出/避開',cls:'rec-sell'};
+} else if (lc.includes('買入') || lc.includes('bullish') || lc.includes('加碼') || lc.includes('符合標準')) {
+  rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};
+} else if (lc.includes('持有') || lc.includes('觀望') || lc.includes('中性')) {
+  rec={icon:'⏸️',label:'建議持有',cls:'rec-hold'};
+}const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content)+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
+async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線圖需要 API Key</div>';bd.textContent='⚠️ 需要 API'}}catch(e){el.innerHTML='<div class="chart-error">載入失敗</div>';bd.textContent='❌ 錯誤'}}
 function backToHome(){resultView.classList.remove('show');renderHistory()}
 function copyResult(){const c=document.querySelector('.result-content');if(c)navigator.clipboard.writeText(c.textContent);showToast('已複製')}
 function askMore(){showPage('chat')}
 function addToHistory(t,type){history=[{ticker:t,type,time:Date.now()},...history.filter(h=>h.ticker!==t)].slice(0,10);saveLS('stock_history',history)}
 function renderHistory(){if(!history.length){historyList.innerHTML='<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">開始分析你的第一支股票</div></div>';return}const tl={overview:'全面',technical:'技術',fundamental:'基本面',risk:'風險',signal:'信號'};historyList.innerHTML=history.map(h=>'<div class="history-item" onclick="loadHistory(\''+h.ticker+'\',\''+h.type+'\')"><div class="history-ticker">'+h.ticker.substring(0,4)+'</div><div class="history-info"><div class="history-title">'+h.ticker+'</div><div class="history-type">'+(tl[h.type]||h.type)+'</div></div><div class="history-arrow">›</div></div>').join('')}
 function loadHistory(t,type){tickerInput.value=t;document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active',b.dataset.type===type));currentType=type;analyze()}
-// Chat — 帶上下文、保留歷史、自動滾動、可連續提問
-let chatSending = false;
-
-// 頁面載入時恢復歷史消息到 DOM
-function restoreChatMessages(){
-  const el = $('chatMessages');
-  if(!el) return;
-  el.innerHTML = ''; // 清空靜態初始消息
-  if(!chatHistoryArr.length){
-    // 無歷史，顯示歡迎語
-    const div = document.createElement('div');
-    div.className = 'chat-msg ai';
-    div.textContent = '你好！我是 StockAI 投顧助手。有任何關於美股的問題，歡迎隨時問我！';
-    el.appendChild(div);
-    return;
-  }
-  chatHistoryArr.forEach(m => {
-    const div = document.createElement('div');
-    if(m.role === 'user'){
-      div.className = 'chat-msg user';
-      div.textContent = m.content;
-    } else {
-      div.className = 'chat-msg ai markdown-body';
-      div.innerHTML = renderMarkdown(m.content);
-    }
-    el.appendChild(div);
-  });
-  scrollChatToBottom();
-}
-
-// 頁面初始化時恢復聊天記錄
-restoreChatMessages();
-
-function scrollChatToBottom() {
-  const el = $('chatMessages');
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-function appendChatMsg(role, html) {
-  const el = $('chatMessages');
-  if (!el) return;
-  const div = document.createElement('div');
-  div.className = 'chat-msg ' + role;
-  div.innerHTML = html;
-  el.appendChild(div);
-  scrollChatToBottom();
-  return div;
-}
-
-async function sendChat() {
-  const input = $('chatInput');
-  const msg = input.value.trim();
-  if (!msg) return;
-
-  // 顯示用戶消息
-  appendChatMsg('user', escapeHtml(msg));
-  input.value = '';
-  input.focus(); // 保持焦點以便連續輸入
-
-  // 加入上下文歷史
-  chatHistoryArr.push({ role: 'user', content: msg });
-  saveChatHistory();
-
-  // 顯示 AI 思考中
-  const thinkingDiv = appendChatMsg('ai', '<span style="opacity:.6">🤔 思考中...</span>');
-  chatSending = true;
-
-  try {
-    // 傳送完整上下文（最近 20 條）
-    const ctx = chatHistoryArr.slice(-20);
-    const res = await fetch('api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: ctx })
-    });
-    const data = await res.json();
-
-    // 替換思考中 → 實際回覆
-    if (thinkingDiv && thinkingDiv.parentNode) {
-      thinkingDiv.className = 'chat-msg ai markdown-body';
-      thinkingDiv.innerHTML = renderMarkdown(data.content);
-    }
-
-    // 存入上下文
-    chatHistoryArr.push({ role: 'assistant', content: data.content });
-    saveChatHistory();
-  } catch (e) {
-    if (thinkingDiv && thinkingDiv.parentNode) {
-      thinkingDiv.innerHTML = '⚠️ 發生錯誤，請稍後再試';
-    }
-  } finally {
-    chatSending = false;
-    scrollChatToBottom();
-  }
-}
-
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
+// Chat
+async function sendChat(){const msg=$('chatInput').value.trim();if(!msg)return;$('chatMessages').innerHTML+='<div class="chat-msg user">'+msg+'</div>';$('chatInput').value='';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;$('chatMessages').innerHTML+='<div class="chat-msg ai">思考中...</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;try{const res=await fetch('api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:msg}]})});const data=await res.json();$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai markdown-body">'+renderMarkdown(data.content)+'</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight}catch(e){$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai">發生錯誤，請稍後再試</div>'}}
 // ===== 自選股 =====
 async function toggleWatchlist(t){const tickers=gWL();if(currentUser){if(tickers.includes(t)){await fetch('api/watchlist/'+t,{method:'DELETE'});showToast('已從自選移除')}else{await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});showToast('已添加到自選')}await loadSrvData()}else{const i=offWatchlist.indexOf(t);if(i>-1){offWatchlist.splice(i,1);showToast('已從自選移除')}else{offWatchlist.push(t);showToast('已添加到自選')}saveLS('stock_watchlist',offWatchlist)}renderWatchlist()}
 async function addToWatchlistDirect(){const t=$('wlTickerInput').value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}if(currentUser){const r=await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});const d=await r.json();if(!d.success){showToast(d.error);return}await loadSrvData()}else{if(offWatchlist.includes(t)){showToast(t+' 已在自選中');return}offWatchlist.push(t);saveLS('stock_watchlist',offWatchlist)}$('wlTickerInput').value='';showToast('✅ 已添加 '+t);renderWatchlist()}
@@ -254,7 +109,7 @@ function showSLTPDialog(t,cp){const h=gPF().find(x=>(x.ticker||x.ticker)===t);if
 async function saveSLTP(t){const sl=parseFloat($('slInput').value)||0,tp=parseFloat($('tpInput').value)||0;if(currentUser){await fetch('api/portfolio/'+t+'/sltp',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({stop_loss:sl,take_profit:tp})});await loadSrvData()}else{const h=offPortfolio.find(x=>x.ticker===t);if(h){if(!offPortfolio.meta)offPortfolio.meta={};h.stopLoss=sl;h.takeProfit=tp;saveLS('stock_portfolio',offPortfolio)}}closeModal();renderPortfolio();showToast('止損止盈已更新')}
 function toggleTxPanel(){const p=$('txPanel'),o=$('txOverlay');p.classList.toggle('open');o.classList.toggle('open');if(p.classList.contains('open'))renderTxPanel()}
 function renderTxPanel(){const body=$('txPanelBody');const txs=gTx();if(!txs.length){body.innerHTML='<div class="empty" style="padding:40px 20px"><div class="empty-icon">📋</div><div class="empty-text">尚無交易記錄</div></div>';return}body.innerHTML=txs.slice().reverse().map(tx=>{const isBuy=tx.type==='buy',isDiv=tx.type==='dividend',isDep=tx.type==='deposit';return '<div class="tx-item"><span class="tx-type '+(isBuy?'buy':isDiv?'dividend':isDep?'deposit':'sell')+'">'+(isBuy?'買入':isDiv?'股息':isDep?'存入':'賣出')+'</span><div class="tx-info"><div class="tx-ticker">'+(tx.ticker||'-')+'</div><div class="tx-detail">'+(tx.shares||0)+'股 @ '+fmtP(tx.price)+' | '+fmtD(tx.created_at||tx.date)+'</div></div><div class="tx-amount" style="color:'+(isBuy||isDep?'#ef4444':'#22c55e')+'">'+(isBuy||isDep?'-':'+')+fmtP(tx.amount||tx.cost||tx.revenue||0)+'</div></div>'}).join('')}
-async function analyzePortfolioAll(){const pf=gPF();if(!pf.length){showToast('尚無持倉');return}const list=$('portfolioList');list.innerHTML+='<div class="loading show" id="pfAILoading"><div class="spinner"></div><div style="text-align:center;padding:16px;color:var(--text-secondary)">🤖 AI 正在獲取即時報價並分析持倉...</div></div>';try{const tickers=pf.map(p=>currentUser?p.ticker:p.ticker);const qr=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const qd=await qr.json();let quotes={};if(qd.success&&qd.quotes){const qArr=Array.isArray(qd.quotes)?qd.quotes:qd.quotes;qArr.forEach(q=>{if(q.success)quotes[q.ticker]=q});}let totalValue=0,totalCost=0;const details=pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const cp=quotes[t]?.price||bp;const mv=sh*cp;const cost=sh*bp;const pnl=mv-cost;const pnlPct=cost>0?(pnl/cost*100):0;totalValue+=mv;totalCost+=cost;return{t,sh,bp,cp,mv,cost,pnl,pnlPct}});const totalPnL=totalValue-totalCost;const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;let summary='持倉組合明細（基於即時報價）：\n';summary+=`總本金：$${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總市值：$${totalValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總損益：$${totalPnL.toFixed(2)} (${totalPnLPct>=0?'+':''}${totalPnLPct.toFixed(2)}%)\n\n`;summary+='| 股票 | 持股 | 成本均價 | 現價 | 本金 | 市值 | 佔比 | 損益金額 | 損益比例 |\n';summary+='|------|------|----------|------|------|------|------|----------|----------|\n';details.sort((a,b)=>b.mv-a.mv).forEach(d=>{const w=totalValue>0?(d.mv/totalValue*100):0;summary+=`| ${d.t} | ${d.sh}股 | $${d.bp.toFixed(2)} | $${d.cp.toFixed(2)} | $${d.cost.toFixed(2)} | $${d.mv.toFixed(2)} | ${w.toFixed(1)}% | $${d.pnl.toFixed(2)} | ${d.pnlPct>=0?'+':''}${d.pnlPct.toFixed(2)}% |\n`});summary+='\n請基於以上**真實市值佔比數據**進行分析，重點關注：\n1. 個股佔比是否合理（單股>30%屬過度集中）\n2. 行業集中度風險\n3. 具體加倉/減倉/提倉建議（請引用實際佔比數字）\n4. 是否需要新增新的個股標的以分散風險\n5. 組合整體風險評估和優化方向\n6. 請在最後提供一段總結，明確指出每支個股的加倉/減倉/提倉/新增建議';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:tickers.join(','),type:'portfolio',question:summary})});const d=await r.json();const ld=$('pfAILoading');if(ld)ld.remove();if(d.success){list.innerHTML='<div class="result-card" style="border-left:4px solid var(--accent)"><div class="result-title">🤖 AI 持倉組合分析</div><div class="result-content markdown-body">'+renderMarkdown(d.content)+'</div></div>'+list.innerHTML}else showToast('分析失敗：'+(d.error||'未知'))}catch(e){const ld=$('pfAILoading');if(ld)ld.remove();showToast('AI 分析服務暫時不可用')}}
+async function analyzePortfolioAll(){const pf=gPF();if(!pf.length){showToast('尚無持倉');return}const list=$('portfolioList');list.innerHTML+='<div class="loading show" id="pfAILoading"><div class="spinner"></div><div style="text-align:center;padding:16px;color:var(--text-secondary)">🤖 AI 正在獲取即時報價並分析持倉...</div></div>';try{const tickers=pf.map(p=>currentUser?p.ticker:p.ticker);const qr=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const qd=await qr.json();const quotes=qd.success?qd.quotes:{};let totalValue=0,totalCost=0;const details=pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const cp=quotes[t]?.price||bp;const mv=sh*cp;const cost=sh*bp;const pnl=mv-cost;const pnlPct=cost>0?(pnl/cost*100):0;totalValue+=mv;totalCost+=cost;return{t,sh,bp,cp,mv,cost,pnl,pnlPct}});const totalPnL=totalValue-totalCost;const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;let summary='持倉組合明細（基於即時報價）：\n';summary+=`總本金：$${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總市值：$${totalValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總損益：$${totalPnL.toFixed(2)} (${totalPnLPct>=0?'+':''}${totalPnLPct.toFixed(2)}%)\n\n`;summary+='| 股票 | 持股 | 成本均價 | 現價 | 本金 | 市值 | 佔比 | 損益金額 | 損益比例 |\n';summary+='|------|------|----------|------|------|------|------|----------|----------|\n';details.sort((a,b)=>b.mv-a.mv).forEach(d=>{const w=totalValue>0?(d.mv/totalValue*100):0;summary+=`| ${d.t} | ${d.sh}股 | $${d.bp.toFixed(2)} | $${d.cp.toFixed(2)} | $${d.cost.toFixed(2)} | $${d.mv.toFixed(2)} | ${w.toFixed(1)}% | $${d.pnl.toFixed(2)} | ${d.pnlPct>=0?'+':''}${d.pnlPct.toFixed(2)}% |\n`});summary+='\n請基於以上**真實市值佔比數據**進行分析，重點關注：\n1. 個股佔比是否合理（單股>30%屬過度集中）\n2. 行業集中度風險\n3. 具體加倉/減倉/提倉建議（請引用實際佔比數字）\n4. 是否需要新增新的個股標的以分散風險\n5. 組合整體風險評估和優化方向\n6. 請在最後提供一段總結，明確指出每支個股的加倉/減倉/提倉/新增建議';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:tickers.join(','),type:'portfolio',question:summary})});const d=await r.json();const ld=$('pfAILoading');if(ld)ld.remove();if(d.success){list.innerHTML='<div class="result-card" style="border-left:4px solid var(--accent)"><div class="result-title">🤖 AI 持倉組合分析</div><div class="result-content markdown-body">'+renderMarkdown(d.content)+'</div></div>'+list.innerHTML}else showToast('分析失敗：'+(d.error||'未知'))}catch(e){const ld=$('pfAILoading');if(ld)ld.remove();showToast('AI 分析服務暫時不可用')}}
 // 持倉頁渲染
 async function renderPortfolio(){const pf=gPF();const summaryEl=$('pfSummary'),listEl=$('portfolioList');if(!pf.length){summaryEl.innerHTML='<div class="pf-summary-grid"><div class="pf-stat"><div class="pf-stat-label">總本金</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">總市值</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">總損益</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">損益比例</div><div class="pf-stat-value">0.00%</div></div></div>';listEl.innerHTML='<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">尚無持倉，點擊「買入股票」新增持倉</div></div>';return}listEl.innerHTML='<div class="loading show"><div class="spinner"></div></div>';try{const tickers=pf.map(p=>currentUser?p.ticker:p.ticker);let quotes={};if(tickers.length){const r=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const d=await r.json();d.quotes?.forEach(q=>{if(q.success)quotes[q.ticker]=q})}let totalCost=0,totalValue=0;pf.forEach(p=>{const bp=currentUser?p.buy_price:p.buyPrice;const sh=currentUser?p.shares:p.shares;totalCost+=sh*bp;totalValue+=sh*(quotes[currentUser?p.ticker:p.ticker]?.price||bp)});const totalPnL=totalValue-totalCost;const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;
 // 行業分布計算
@@ -326,7 +181,7 @@ async function loadUserInvestCtx() {
 searchBtn.onclick=analyze;
 tickerInput.onkeypress=e=>{if(e.key==='Enter')analyze()};
 $('chatSend').onclick=sendChat;
-$('chatInput').onkeypress=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}};
+$('chatInput').onkeypress=e=>{if(e.key==='Enter')sendChat()};
 document.querySelectorAll('.nav-item').forEach(btn=>{btn.onclick=()=>showPage(btn.dataset.page)});
 document.querySelectorAll('.chip').forEach(chip=>{chip.onclick=()=>{tickerInput.value=chip.dataset.ticker;analyze()}});
 const wlInput=$('wlTickerInput');
