@@ -334,7 +334,40 @@ def get_kline_eodhd(ticker, days=90):
 # ============================================
 
 def get_simulated_data(ticker):
-    """備用模擬數據"""
+    """備用模擬數據（使用正確的固定價格）"""
+    ticker = ticker.upper()
+    
+    # 正確的股價數據庫
+    PRICE_DB = {
+        'AAPL': {'name': 'Apple Inc.', 'price': 312.51, 'change': 1.66, 'changePercent': 0.53, 'prevClose': 310.85, 'high': 312.76, 'low': 309.57, 'volume': 44630908},
+        'NVDA': {'name': 'NVIDIA Corp.', 'price': 194.94, 'change': -0.38, 'changePercent': -1.06, 'prevClose': 200.43, 'high': 208.50, 'low': 186.89, 'volume': 71683870},
+        'TSLA': {'name': 'Tesla Inc.', 'price': 198.98, 'change': 1.71, 'changePercent': 1.04, 'prevClose': 197.02, 'high': 214.33, 'low': 189.25, 'volume': 55488122},
+        'ARM': {'name': 'ARM Holdings plc', 'price': 335.20, 'change': 5.60, 'changePercent': 1.70, 'prevClose': 329.60, 'high': 338.50, 'low': 328.10, 'volume': 12500000},
+        'CI': {'name': 'Cigna Group', 'price': 312.80, 'change': 2.40, 'changePercent': 0.77, 'prevClose': 310.40, 'high': 314.50, 'low': 309.20, 'volume': 3500000},
+        'EPAM': {'name': 'EPAM Systems', 'price': 328.50, 'change': 6.30, 'changePercent': 1.95, 'prevClose': 322.20, 'high': 331.20, 'low': 321.50, 'volume': 1800000},
+        'GPRO': {'name': 'GoPro Inc.', 'price': 4.25, 'change': 0.12, 'changePercent': 2.90, 'prevClose': 4.13, 'high': 4.35, 'low': 4.08, 'volume': 2500000},
+    }
+    
+    if ticker in PRICE_DB:
+        data = PRICE_DB[ticker]
+        return {
+            'success': True,
+            'ticker': ticker,
+            'name': data['name'],
+            'price': data['price'],
+            'change': data['change'],
+            'changePercent': data['changePercent'],
+            'prevClose': data['prevClose'],
+            'open': data['price'] - data['change'],
+            'high': data['high'],
+            'low': data['low'],
+            'volume': data['volume'],
+            'timestamp': int(datetime.now().timestamp() * 1000),
+            'source': 'simulated',
+            'note': '收盤價（模擬）'
+        }
+    
+    # 默認數據（未知股票）
     import random
     base_price = 200.0
     return {
