@@ -513,6 +513,44 @@ app.post('/api/auth/migrate', (req, res) => {
 const klineCache = new Map(); // ticker -> { data, timestamp }
 const KLINE_CACHE_TTL = 30 * 60 * 1000; // 30 分鐘
 
+// 批量報價緩存（關鍵修復：收盤後價格不再變動）
+const quotesCache = new Map(); // ticker -> { data, timestamp }
+const QUOTES_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時（美股交易時間外使用緩存）
+
+// 檢查是否在美股交易時間（北京時間，夏令時 21:30-04:00，冬令時 22:30-05:00）
+function isUSMarketOpen() {
+  const now = new Date();
+  const day = now.getUTCDay(); // 0=週日, 1-5=週一到週五
+  const hour = now.getUTCHours(); // UTC 小時
+  const minute = now.getUTCMinutes();
+  
+  // 週末不開市
+  if (day === 0 || day === 6) return false;
+  
+  // 夏令時（3月第二個週日到11月第一個週日）：21:30-04:00 UTC = 北京 05:30-12:00
+  // 冬令時：22:30-05:00 UTC = 北京 06:30-13:00
+  const month = now.getUTCMonth() + 1;
+  const isDST = (month > 3 && month < 11) || 
+                 (month === 3 && day >= 8) || 
+                 (month === 11 && day < 1);
+  
+  const openHour = isDST ? 21 : 22;
+  const closeHour = isDST ? 4 : 5;
+  
+  // 轉換為分鐘數比較
+  const nowMinutes = hour * 60 + minute;
+  const openMinutes = openHour * 60 + 30;
+  const closeMinutes = closeHour * 60;
+  
+  if (openHour < closeHour) {
+    // 同一天（例如 00:00-04:00）
+    return nowMinutes >= openMinutes && nowMinutes < closeMinutes;
+  } else {
+    // 跨天（例如 21:30-04:00）
+    return nowMinutes >= openMinutes || nowMinutes < closeMinutes;
+  }
+}
+
 app.get('/api/chart/:ticker', async (req, res) => {
   const ticker = req.params.ticker?.toUpperCase();
   if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
@@ -1017,40 +1055,68 @@ const stockData = {
   'V': { name: 'Visa Inc.', price: 312.40, change: -1.10, changePercent: -0.35, prevClose: 313.50, high: 314.80, low: 311.20, volume: 6100000, pe: 30.5, eps: 10.24, marketCap: 645000000000, week52High: 318.71, week52Low: 227.68 }
 };
 
-// 報價 API
+// 報價 API（添加緩存邏輯，與批量報價一致）
 app.post('/api/quote', async (req, res) => {
   const { ticker } = req.body;
   if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
   
   const t = ticker.trim().toUpperCase();
+  const isMarketOpen = isUSMarketOpen();
+  
+  // 【關鍵修復】非交易時間優先使用緩存
+  if (!isMarketOpen) {
+    const cached = quotesCache.get(t);
+    if (cached && (Date.now() - cached.timestamp) < QUOTES_CACHE_TTL) {
+      console.log('[Quote] 非交易時間，使用緩存: ' + t);
+      return res.json({ ...cached.data, cached: true, note: '收盤價（已緩存）' });
+    }
+  }
   
   // Step 1: 嘗試 Python 爬蟲（優先 - Yahoo Finance 實時數據）
   const pythonResult = await getStockPricePython(t);
   if (pythonResult && pythonResult.price && !pythonResult.error) {
+    quotesCache.set(t, { data: { success: true, ...pythonResult }, timestamp: Date.now() });
     return res.json({ success: true, ...pythonResult });
   }
   
   // Step 2: 嘗試 Alpha Vantage（備用）
   const alphaResult = await fetchAlphaVantage(t);
   if (alphaResult && alphaResult.price) {
-    return res.json({ success: true, ...alphaResult });
+    const result = { success: true, ...alphaResult };
+    quotesCache.set(t, { data: result, timestamp: Date.now() });
+    return res.json(result);
   }
   
   // Step 3: 使用模擬數據
   const data = stockData[t];
   if (data) {
-    return res.json({
+    let price, change, changePercent;
+    if (!isMarketOpen) {
+      // 非交易時間，使用固定收盤價
+      price = data.price;
+      change = data.change;
+      changePercent = data.changePercent;
+    } else {
+      // 交易時間，可以有隨機波動
+      const basePrice = data.price;
+      const randomFactor = 0.99 + Math.random() * 0.02; // 1% 波動
+      price = round(basePrice * randomFactor, 2);
+      change = round(price - data.prevClose, 2);
+      changePercent = round((change / data.prevClose) * 100, 2);
+    }
+    
+    const result = {
       success: true,
       ticker: t,
       name: data.name,
-      price: data.price,
-      change: data.change,
-      changePercent: data.changePercent,
+      price: price,
+      change: change,
+      changePercent: changePercent,
       prevClose: data.prevClose,
-      open: data.price - data.change,
-      high: data.high,
-      low: data.low,
-      volume: data.volume,
+      open: !isMarketOpen ? data.price - data.change : round(price - change * 0.3, 2),
+      high: !isMarketOpen ? data.high : round(price * (1 + Math.random() * 0.01), 2),
+      low: !isMarketOpen ? data.low : round(price * (1 - Math.random() * 0.01), 2),
+      volume: !isMarketOpen ? data.volume : Math.floor(data.volume * (0.8 + Math.random() * 0.4)),
       peRatio: data.pe,
       eps: data.eps,
       marketCap: data.marketCap,
@@ -1058,43 +1124,75 @@ app.post('/api/quote', async (req, res) => {
       fiftyTwoWeekLow: data.week52Low,
       timestamp: Date.now(),
       source: 'demo',
-      note: '模擬數據（建議配置 Alpha Vantage API）'
-    });
+      note: !isMarketOpen ? '收盤價（模擬）' : '模擬數據（建議配置 Alpha Vantage API）'
+    };
+    
+    quotesCache.set(t, { data: result, timestamp: Date.now() });
+    return res.json(result);
   }
   
   return res.json({ success: false, error: `股票代碼 ${t} 不存在` });
 });
 
-// 批量報價（增強版：優先 Python 爬蟲 → Alpha Vantage → 模擬數據）
+// 批量報價（增強版 + 關鍵修復：收盤後使用緩存，價格不再變動）
 app.post('/api/quotes', async (req, res) => {
   const { tickers } = req.body;
   if (!tickers || !Array.isArray(tickers)) {
     return res.status(400).json({ error: '請提供股票代碼列表' });
   }
+  
+  const isMarketOpen = isUSMarketOpen();
   const results = [];
+  
   const quotePromises = tickers.map(async (t) => {
     const tu = t.toUpperCase();
+    
+    // 【關鍵修復】非交易時間優先使用緩存
+    if (!isMarketOpen) {
+      const cached = quotesCache.get(tu);
+      if (cached && (Date.now() - cached.timestamp) < QUOTES_CACHE_TTL) {
+        console.log('[Quotes] 非交易時間，使用緩存: ' + tu);
+        return { ...cached.data, cached: true, note: '收盤價（已緩存）' };
+      }
+    }
+    
+    // 交易時間或無緩存時，獲取最新數據
     // Step 1: 嘗試 Python 爬蟲（使用修復版）
     const pythonResult = await getStockPricePython(tu);
     if (pythonResult && pythonResult.success && pythonResult.price) {
+      // 成功獲取，更新緩存
+      quotesCache.set(tu, { data: pythonResult, timestamp: Date.now() });
       return pythonResult;
     }
+    
     // Step 2: 嘗試 Alpha Vantage
     const alphaResult = await fetchAlphaVantage(tu);
     if (alphaResult && alphaResult.price) {
-      return { success: true, ...alphaResult };
+      const result = { success: true, ...alphaResult };
+      quotesCache.set(tu, { data: result, timestamp: Date.now() });
+      return result;
     }
-    // Step 3: 模擬數據（使用修復版的模擬數據，避免舊的固定值）
+    
+    // Step 3: 模擬數據
     const data = stockData[tu];
     if (data) {
-      // 隨機波動，避免固定值
-      const basePrice = data.price;
-      const randomFactor = 0.99 + Math.random() * 0.02; // 1% 波動
-      const currentPrice = round(basePrice * randomFactor, 2);
-      const change = round(currentPrice - data.prevClose, 2);
-      const changePercent = round((change / data.prevClose) * 100, 2);
+      let currentPrice, change, changePercent;
       
-      return { 
+      if (!isMarketOpen) {
+        // 【關鍵修復】非交易時間，模擬數據也不隨機波動，使用固定收盤價
+        currentPrice = data.price;
+        change = round(currentPrice - data.prevClose, 2);
+        changePercent = round((change / data.prevClose) * 100, 2);
+      } else {
+        // 交易時間，可以有隨機波動
+        const basePrice = data.price;
+        const randomFactor = 0.99 + Math.random() * 0.02; // 1% 波動
+        currentPrice = round(basePrice * randomFactor, 2);
+        change = round(currentPrice - data.prevClose, 2);
+        changePercent = round((change / data.prevClose) * 100, 2);
+      }
+      
+      const result = { 
         success: true, 
         ticker: tu, 
         name: data.name, 
@@ -1103,13 +1201,18 @@ app.post('/api/quotes', async (req, res) => {
         changePercent: changePercent,
         prevClose: data.prevClose, 
         open: round(currentPrice - change * 0.3, 2),
-        high: round(currentPrice * (1 + Math.random() * 0.01), 2),
-        low: round(currentPrice * (1 - Math.random() * 0.01), 2),
-        volume: Math.floor(data.volume * (0.8 + Math.random() * 0.4)),
+        high: !isMarketOpen ? currentPrice : round(currentPrice * (1 + Math.random() * 0.01), 2),
+        low: !isMarketOpen ? currentPrice : round(currentPrice * (1 - Math.random() * 0.01), 2),
+        volume: !isMarketOpen ? data.volume : Math.floor(data.volume * (0.8 + Math.random() * 0.4)),
         peRatio: data.pe, 
         source: 'demo',
-        note: '模擬數據（API 不可用）'
+        note: !isMarketOpen ? '收盤價（模擬）' : '模擬數據（API 不可用）'
       };
+      
+      // 更新緩存
+      quotesCache.set(tu, { data: result, timestamp: Date.now() });
+      
+      return result;
     }
     return { success: false, ticker: t, error: '不存在' };
   });
