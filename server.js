@@ -517,7 +517,8 @@ const KLINE_CACHE_TTL = 30 * 60 * 1000; // 30 分鐘
 const quotesCache = new Map(); // ticker -> { data, timestamp }
 const QUOTES_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時（美股交易時間外使用緩存）
 
-// 檢查是否在美股交易時間（北京時間，夏令時 21:30-04:00，冬令時 22:30-05:00）
+// 檢查是否在美股交易時間（正確版本！）
+// 美股常規交易時間：紐約時間 09:30-16:00 = UTC 13:30-20:00（夏令時）/ UTC 14:30-21:00（冬令時）
 function isUSMarketOpen() {
   const now = new Date();
   const day = now.getUTCDay(); // 0=週日, 1-5=週一到週五
@@ -525,30 +526,34 @@ function isUSMarketOpen() {
   const minute = now.getUTCMinutes();
   
   // 週末不開市
-  if (day === 0 || day === 6) return false;
+  if (day === 0 || day === 6) {
+    return false;
+  }
   
-  // 夏令時（3月第二個週日到11月第一個週日）：21:30-04:00 UTC = 北京 05:30-12:00
-  // 冬令時：22:30-05:00 UTC = 北京 06:30-13:00
+  // 夏令時（3月第二個週日到11月第一個週日）：UTC-4 = 紐約時間
+  // 冬令時：UTC-5 = 紐約時間
   const month = now.getUTCMonth() + 1;
-  const isDST = (month > 3 && month < 11) || 
-                 (month === 3 && day >= 8) || 
-                 (month === 11 && day < 1);
+  const dateInMonth = now.getUTCDate();
+  const firstDayOfMonth = new Date(Date.UTC(now.getUTCFullYear(), month - 1, 1)).getUTCDay();
+  const secondSundayMarch = firstDayOfMonth === 0 ? 8 : (14 - firstDayOfMonth); // 3月第二個週日
+  const firstSundayNov = firstDayOfMonth === 0 ? 1 : (7 - firstDayOfMonth); // 11月第一個週日
   
-  const openHour = isDST ? 21 : 22;
-  const closeHour = isDST ? 4 : 5;
+  const isDST = (month > 3 && month < 11) || 
+                 (month === 3 && dateInMonth >= secondSundayMarch) || 
+                 (month === 11 && dateInMonth < firstSundayNov);
+  
+  const openHour = isDST ? 13 : 14; // UTC 13:30（夏令時）或 14:30（冬令時）開市
+  const closeHour = isDST ? 20 : 21; // UTC 20:00（夏令時）或 21:00（冬令時）收市
   
   // 轉換為分鐘數比較
   const nowMinutes = hour * 60 + minute;
   const openMinutes = openHour * 60 + 30;
   const closeMinutes = closeHour * 60;
   
-  if (openHour < closeHour) {
-    // 同一天（例如 00:00-04:00）
-    return nowMinutes >= openMinutes && nowMinutes < closeMinutes;
-  } else {
-    // 跨天（例如 21:30-04:00）
-    return nowMinutes >= openMinutes || nowMinutes < closeMinutes;
-  }
+  // 只在同一天的交易時間內
+  const isOpen = nowMinutes >= openMinutes && nowMinutes < closeMinutes;
+  
+  return isOpen;
 }
 
 app.get('/api/chart/:ticker', async (req, res) => {
