@@ -1044,20 +1044,24 @@ function getStockPricePython(ticker) {
   });
 }
 
-// 模擬股價數據（備用）
+// 模擬股價數據（備用）- 更新至正確價格
 const stockData = {
-  'AAPL': { name: 'Apple Inc.', price: 254.50, change: 3.25, changePercent: 1.29, prevClose: 251.25, high: 255.80, low: 251.00, volume: 42300000, pe: 28.5, eps: 8.93, marketCap: 3850000000000, week52High: 260.10, week52Low: 164.08 },
+  'AAPL': { name: 'Apple Inc.', price: 312.51, change: 1.66, changePercent: 0.53, prevClose: 310.85, high: 312.76, low: 309.57, volume: 44630908, pe: 28.5, eps: 8.93, marketCap: 3850000000000, week52High: 313.26, week52Low: 164.08 },
   'MSFT': { name: 'Microsoft Corp.', price: 418.57, change: -1.15, changePercent: -0.27, prevClose: 419.72, high: 420.50, low: 417.20, volume: 18500000, pe: 35.2, eps: 12.10, marketCap: 3160000000000, week52High: 430.82, week52Low: 309.45 },
   'GOOGL': { name: 'Alphabet Inc.', price: 178.90, change: 1.45, changePercent: 0.82, prevClose: 177.45, high: 180.20, low: 176.80, volume: 22100000, pe: 24.8, eps: 7.21, marketCap: 2200000000000, week52High: 191.75, week52Low: 121.46 },
   'AMZN': { name: 'Amazon.com Inc.', price: 228.50, change: 4.80, changePercent: 2.15, prevClose: 223.70, high: 230.00, low: 224.50, volume: 35200000, pe: 45.6, eps: 5.01, marketCap: 2370000000000, week52High: 238.39, week52Low: 144.05 },
-  'NVDA': { name: 'NVIDIA Corp.', price: 175.24, change: -3.50, changePercent: -1.96, prevClose: 178.74, high: 180.50, low: 174.20, volume: 45000000, pe: 65.2, eps: 2.69, marketCap: 4320000000000, week52High: 184.88, week52Low: 47.32 },
+  'NVDA': { name: 'NVIDIA Corp.', price: 194.94, change: -0.38, changePercent: -1.06, prevClose: 200.43, high: 208.50, low: 186.89, volume: 71683870, pe: 65.2, eps: 2.69, marketCap: 4320000000000, week52High: 208.50, week52Low: 47.32 },
   'META': { name: 'Meta Platforms Inc.', price: 512.30, change: 8.90, changePercent: 1.77, prevClose: 503.40, high: 515.60, low: 501.20, volume: 15800000, pe: 32.1, eps: 15.95, marketCap: 1310000000000, week52High: 542.81, week52Low: 274.38 },
-  'TSLA': { name: 'Tesla Inc.', price: 175.80, change: -5.20, changePercent: -2.87, prevClose: 181.00, high: 182.50, low: 174.20, volume: 89500000, pe: 52.3, eps: 3.36, marketCap: 560000000000, week52High: 299.29, week52Low: 138.80 },
+  'TSLA': { name: 'Tesla Inc.', price: 198.98, change: 1.71, changePercent: 1.04, prevClose: 197.02, high: 214.33, low: 189.25, volume: 55488122, pe: 52.3, eps: 3.36, marketCap: 560000000000, week52High: 299.29, week52Low: 138.80 },
   'AMD': { name: 'AMD Inc.', price: 158.40, change: 2.30, changePercent: 1.47, prevClose: 156.10, high: 160.50, low: 155.80, volume: 45600000, pe: 285.6, eps: 0.55, marketCap: 256000000000, week52High: 164.46, week52Low: 93.12 },
   'NFLX': { name: 'Netflix Inc.', price: 628.90, change: 12.50, changePercent: 2.03, prevClose: 616.40, high: 632.00, low: 615.50, volume: 5200000, pe: 45.2, eps: 13.91, marketCap: 273000000000, week52High: 639.00, week52Low: 344.73 },
   'BRK.B': { name: 'Berkshire Hathaway', price: 458.20, change: 1.80, changePercent: 0.39, prevClose: 456.40, high: 460.50, low: 455.80, volume: 2800000, pe: 9.2, eps: 49.80, marketCap: 780000000000, week52High: 468.00, week52Low: 362.59 },
   'JPM': { name: 'JPMorgan Chase', price: 248.50, change: 3.20, changePercent: 1.30, prevClose: 245.30, high: 250.00, low: 245.50, volume: 8200000, pe: 11.8, eps: 21.05, marketCap: 715000000000, week52High: 253.94, week52Low: 170.10 },
-  'V': { name: 'Visa Inc.', price: 312.40, change: -1.10, changePercent: -0.35, prevClose: 313.50, high: 314.80, low: 311.20, volume: 6100000, pe: 30.5, eps: 10.24, marketCap: 645000000000, week52High: 318.71, week52Low: 227.68 }
+  'V': { name: 'Visa Inc.', price: 312.40, change: -1.10, changePercent: -0.35, prevClose: 313.50, high: 314.80, low: 311.20, volume: 6100000, pe: 30.5, eps: 10.24, marketCap: 645000000000, week52High: 318.71, week52Low: 227.68 },
+  'ARM': { name: 'ARM Holdings plc', price: 335.20, change: 5.60, changePercent: 1.70, prevClose: 329.60, high: 338.50, low: 328.10, volume: 12500000, pe: 85.2, eps: 3.93, marketCap: 135000000000, week52High: 342.10, week52Low: 85.40 },
+  'CI': { name: 'Cigna Group', price: 312.80, change: 2.40, changePercent: 0.77, prevClose: 310.40, high: 314.50, low: 309.20, volume: 3500000, pe: 18.5, eps: 16.91, marketCap: 82000000000, week52High: 320.10, week52Low: 225.60 },
+  'EPAM': { name: 'EPAM Systems', price: 328.50, change: 6.30, changePercent: 1.95, prevClose: 322.20, high: 331.20, low: 321.50, volume: 1800000, pe: 45.2, eps: 7.27, marketCap: 38000000000, week52High: 340.80, week52Low: 210.30 },
+  'GPRO': { name: 'GoPro Inc.', price: 4.25, change: 0.12, changePercent: 2.90, prevClose: 4.13, high: 4.35, low: 4.08, volume: 2500000, pe: 0, eps: -0.52, marketCap: 500000000, week52High: 5.85, week52Low: 3.20 }
 };
 
 // 報價 API（添加緩存邏輯，與批量報價一致）
