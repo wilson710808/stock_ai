@@ -284,7 +284,7 @@ app.post('/api/auth/register', (req, res) => {
     const token = signJWT({ userId: user.id, username: user.username, role: user.role });
     res.cookie('token', token, {
       httpOnly: true,
-      maxAge: JWT_EXPIRY,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
     });
@@ -302,15 +302,15 @@ app.post('/api/auth/login', (req, res) => {
     if (!username || !password) return res.status(400).json({ error: '請輸入用戶名和密碼' });
     const user = stmts.getUserByUsername.get(username) || (username.includes('@') ? stmts.getUserByEmail.get(username) : null);
     if (!user || !verifyPassword(password, user.password_hash)) {
-      stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
+      // // stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
       return res.status(401).json({ error: '用戶名或密碼錯誤' });
     }
-    stmts.updateUserLogin.run(user.id);
-    stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
+    // // stmts.updateUserLogin.run(user.id);
+    // // stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
     const token = signJWT({ userId: user.id, username: user.username, role: user.role });
     res.cookie('token', token, {
       httpOnly: true,
-      maxAge: JWT_EXPIRY,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
     });
