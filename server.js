@@ -175,15 +175,23 @@ app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (CORS_ORIGINS === '*') return cb(null, true);
-    if (!CORS_ORIGINS) return cb(null, false);
+    if (!CORS_ORIGINS) return cb(null, true); // 未設置時默認允許
     const allowed = CORS_ORIGINS.split(',').map(s => s.trim());
     cb(null, allowed.includes(origin));
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+
+// 全局安全 header
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.removeHeader('X-Powered-By');
+  next();
+});
 
 // ============================================
 // 財務數據 API（巴菲特/芒格系統，不需要登錄）
@@ -243,12 +251,6 @@ app.get('/api/intrinsic-value/:ticker', async (req, res) => {
 
 // 其他 API 需要認證
 app.use(authMiddleware);
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.removeHeader('X-Powered-By');
-  next();
-});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== 行業分類 API =====
@@ -302,11 +304,11 @@ app.post('/api/auth/login', (req, res) => {
     if (!username || !password) return res.status(400).json({ error: '請輸入用戶名和密碼' });
     const user = stmts.getUserByUsername.get(username) || (username.includes('@') ? stmts.getUserByEmail.get(username) : null);
     if (!user || !verifyPassword(password, user.password_hash)) {
-      // // stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
+      stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
       return res.status(401).json({ error: '用戶名或密碼錯誤' });
     }
-    // // stmts.updateUserLogin.run(user.id);
-    // // stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
+    stmts.updateUserLogin.run(user.id);
+    stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
     const token = signJWT({ userId: user.id, username: user.username, role: user.role });
     res.cookie('token', token, {
       httpOnly: true,
@@ -381,7 +383,7 @@ app.post('/api/portfolio/buy', (req, res) => {
   if (!t || !shares || !price || shares <= 0 || price <= 0) return res.status(400).json({ error: '無效參數' });
   const cost = shares * price;
   const user = stmts.getUserById.get(req.user.userId);
- // No cash constraint — user can add any position directly
+  if (user.cash < cost) return res.status(400).json({ error: '現金不足，當前餘額 $' + user.cash.toFixed(2) + '，需要 $' + cost.toFixed(2) });
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
  const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   try {
@@ -393,7 +395,8 @@ app.post('/api/portfolio/buy', (req, res) => {
       } else {
  db.prepare('INSERT INTO portfolio (user_id, ticker, shares, buy_price, stop_loss, take_profit, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(req.user.userId, t, shares, price, stop_loss || 0, take_profit || 0, note || '', createdAt);
       }
- // Cash not tracked — positions added directly
+      // 扣除現金
+      stmts.updateCash.run(user.cash - cost, req.user.userId);
  stmts.insertTransaction.run(req.user.userId, 'buy', t, shares, price, cost, createdAt + (note ? ' ' + note : ''));
     });
     tx();
@@ -405,11 +408,11 @@ app.post('/api/portfolio/buy', (req, res) => {
 
 app.post('/api/portfolio/sell', (req, res) => {
   if (!req.user) return res.status(401).json({ error: '請先登錄' });
-  const { ticker, shares, price } = req.body;
+  const { ticker, shares, price, sell_date } = req.body;
   const t = ticker?.toUpperCase();
   if (!t || !shares || !price || shares <= 0) return res.status(400).json({ error: '無效參數' });
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
- const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
+  const createdAt = sell_date ? sell_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   if (shares > existing.shares) return res.status(400).json({ error: '賣出股數超過持倉' });
   const revenue = shares * price;
@@ -438,7 +441,6 @@ app.put('/api/portfolio/:ticker/sltp', (req, res) => {
   const t = req.params.ticker?.toUpperCase();
   const { stop_loss, take_profit } = req.body;
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
- const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   stmts.updatePortfolio.run(existing.shares, existing.buy_price, stop_loss || 0, take_profit || 0, existing.note, req.user.userId, t);
   res.json({ success: true });
@@ -449,7 +451,6 @@ app.put('/api/portfolio/:ticker/note', (req, res) => {
   const t = req.params.ticker?.toUpperCase();
   const { note } = req.body;
   const existing = stmts.getPortfolioItem.get(req.user.userId, t);
- const createdAt = buy_date ? buy_date.replace('T',' ') : new Date().toISOString().replace('T',' ').split('.')[0];
   if (!existing) return res.status(404).json({ error: '無此持倉' });
   stmts.updatePortfolio.run(existing.shares, existing.buy_price, existing.stop_loss, existing.take_profit, note || '', req.user.userId, t);
   res.json({ success: true });
@@ -654,12 +655,16 @@ function isUSMarketOpen() {
   
   // 夏令時（3月第二個週日到11月第一個週日）：UTC-4 = 紐約時間
   // 冬令時：UTC-5 = 紐約時間
+  const year = now.getUTCFullYear();
   const month = now.getUTCMonth() + 1;
   const dateInMonth = now.getUTCDate();
-  const firstDayOfMonth = new Date(Date.UTC(now.getUTCFullYear(), month - 1, 1)).getUTCDay();
-  const secondSundayMarch = firstDayOfMonth === 0 ? 8 : (14 - firstDayOfMonth); // 3月第二個週日
-  const firstSundayNov = firstDayOfMonth === 0 ? 1 : (7 - firstDayOfMonth); // 11月第一個週日
-  
+
+  // 分別計算3月和11月的第二/第一個週日
+  const march1st = new Date(Date.UTC(year, 2, 1)).getUTCDay();
+  const secondSundayMarch = march1st === 0 ? 8 : (15 - march1st); // 3月第二個週日
+  const nov1st = new Date(Date.UTC(year, 10, 1)).getUTCDay();
+  const firstSundayNov = nov1st === 0 ? 1 : (8 - nov1st); // 11月第一個週日
+
   const isDST = (month > 3 && month < 11) || 
                  (month === 3 && dateInMonth >= secondSundayMarch) || 
                  (month === 11 && dateInMonth < firstSundayNov);
@@ -852,19 +857,24 @@ async function buildUserInvestContext(userId) {
     const history = stmts.getAnalysisHistory.all(userId, 10); // 最近10次分析
     let ctx = '';
     if (pf.length) {
-      // 獲取即時報價以計算正確佔比
+      // 獲取即時報價以計算正確佔比（使用緩存避免重複請求）
       const tickers = pf.map(p => p.ticker);
       let quotes = {};
       try {
-        const resp = await fetch('http://127.0.0.1:3007/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) });
-        const qd = await resp.json();
-        if (qd.success && qd.quotes) {
-        // /api/quotes 返回數組，轉換為 ticker 鍵值對象
-        const qArr = Array.isArray(qd.quotes) ? qd.quotes : Object.values(qd.quotes);
-        qArr.forEach(q => { if (q.success && q.ticker) quotes[q.ticker] = q; });
-          console.log('[buildUserInvestContext] Got quotes for:', Object.keys(quotes).join(','));
+        // 檢查緩存，5分鐘內不重複請求
+        const CONTEXT_QUOTES_CACHE_TTL = 5 * 60 * 1000;
+        const cacheKey = 'context_quotes_' + tickers.sort().join(',');
+        const cachedQ = quotesCache.get(cacheKey);
+        if (cachedQ && (Date.now() - cachedQ.timestamp) < CONTEXT_QUOTES_CACHE_TTL) {
+          quotes = cachedQ.data;
         } else {
-          console.warn('[buildUserInvestContext] quotes response unexpected:', JSON.stringify(qd).substring(0,200));
+          const resp = await fetch('http://127.0.0.1:3007/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) });
+          const qd = await resp.json();
+          if (qd.success && qd.quotes) {
+            const qArr = Array.isArray(qd.quotes) ? qd.quotes : Object.values(qd.quotes);
+            qArr.forEach(q => { if (q.success && q.ticker) quotes[q.ticker] = q; });
+            quotesCache.set(cacheKey, { data: quotes, timestamp: Date.now() });
+          }
         }
       } catch(e) { console.warn('[buildUserInvestContext] quotes fetch failed:', e.message); }
 
@@ -2047,31 +2057,7 @@ ${conclusion || '无'}
   res.json({ success: true, filename });
 });
 
-// 获取历史分析记录
-app.get('/api/analysis-history', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  
-  const memoryDir = path.join(__dirname, '..', 'memory', 'analysis');
-  if (!fs.existsSync(memoryDir)) {
-    return res.json({ success: true, records: [] });
-  }
-  
-  const files = fs.readdirSync(memoryDir)
-    .filter(f => f.endsWith('.json'))
-    .sort((a, b) => b.localeCompare(a))
-    .slice(0, 20);
-  
-  const records = files.map(f => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(memoryDir, f), 'utf8'));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-  
-  res.json({ success: true, records });
-});
+// （analysis-history GET 已在前面通過數據庫定義，此處不再重複）
 
 // 啟動服務
 app.listen(PORT, "0.0.0.0", () => {
