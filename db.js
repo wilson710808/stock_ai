@@ -113,6 +113,16 @@ CREATE TABLE IF NOT EXISTS watchlist_groups (
   UNIQUE(user_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS analysis_favorites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  analysis_id INTEGER REFERENCES analysis_history(id) ON DELETE CASCADE,
+  ticker TEXT NOT NULL,
+  type TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_portfolio_user ON portfolio(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_ticker ON transactions(user_id, ticker);
@@ -120,6 +130,8 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id);
 CREATE INDEX IF NOT EXISTS idx_dividends_user ON dividends(user_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_user ON analysis_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_user ON analysis_favorites(user_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_ticker ON analysis_favorites(user_id, ticker);
 CREATE INDEX IF NOT EXISTS idx_login_logs_user ON login_logs(user_id);
 `);
 
@@ -165,6 +177,12 @@ const stmts = {
   // Analysis History
   getAnalysisHistory: db.prepare(`SELECT * FROM analysis_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`),
   insertAnalysis: db.prepare(`INSERT INTO analysis_history (user_id, ticker, type, content, recommendation) VALUES (?, ?, ?, ?, ?)`),
+  getAnalysisById: db.prepare(`SELECT * FROM analysis_history WHERE id = ? AND user_id = ?`),
+  // Favorites
+  addFavorite: db.prepare(`INSERT INTO analysis_favorites (user_id, analysis_id, ticker, type, note) VALUES (?, ?, ?, ?, ?)`),
+  removeFavorite: db.prepare(`DELETE FROM analysis_favorites WHERE id = ? AND user_id = ?`),
+  getFavorites: db.prepare(`SELECT f.*, a.content, a.recommendation FROM analysis_favorites f LEFT JOIN analysis_history a ON f.analysis_id = a.id WHERE f.user_id = ? ORDER BY f.created_at DESC`),
+  getFavoritesByTicker: db.prepare(`SELECT f.*, a.content, a.recommendation FROM analysis_favorites f LEFT JOIN analysis_history a ON f.analysis_id = a.id WHERE f.user_id = ? AND f.ticker = ? ORDER BY f.created_at DESC`),
   // Login Logs
   insertLoginLog: db.prepare(`INSERT INTO login_logs (user_id, ip, user_agent, success) VALUES (?, ?, ?, ?)`),
 };

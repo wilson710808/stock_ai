@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>StockAI 新API測試</title>
+<style>
+body{font-family:'Noto Sans TC',sans-serif;background:#f5f7fa;color:#1a1a2e;max-width:800px;margin:0 auto;padding:20px}
+.test-section{background:#fff;border-radius:16px;padding:24px;margin-bottom:20px;box-shadow:0 4px 20px rgba(0,0,0,.06)}
+.title{font-size:22px;font-weight:700;margin-bottom:16px;color:#00C853}
+.subtitle{font-size:14px;color:#6b7280;margin-bottom:12px}
+.input{padding:12px 16px;font-size:16px;border:2px solid #e5e7eb;border-radius:12px;background:#fff;outline:none;font-family:inherit;text-transform:uppercase;width:300px;margin-right:10px}
+.input:focus{border-color:#00C853}
+.btn{padding:12px 20px;background:#00C853;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer}
+.btn:active{transform:scale(.97)}
+.result{margin-top:16px;background:#f0fdf0;border:1px solid #4ADE80;border-radius:12px;padding:16px;white-space:pre-wrap;word-break:break-all;font-size:13px;display:none}
+.status{padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:13px}
+.status.success{background:#f0fdf0;color:#16a34a;border:1px solid #4ADE80}
+.status.error{background:#fef2f2;color:#dc2626;border:1px solid #f87171}
+.status.loading{background:#fffbeb;color:#d97706;border:1px solid #fbbf24}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tab{padding:8px 16px;background:#e5e7eb;border:none;border-radius:20px;font-size:13px;cursor:pointer}
+.tab.active{background:#00C853;color:#fff}
+.markdown-body{line-height:1.7}
+.markdown-body table{width:100%;border-collapse:collapse}
+.markdown-body th,.markdown-body td{border:1px solid #e5e7eb;padding:8px 10px}
+.markdown-body th{background:#f9fafb}
+</style>
+</head>
+<body>
+
+<div class="test-section">
+  <div class="title">📊 StockAI 新API測試</div>
+  <div class="subtitle">帶重試機制的個股分析</div>
+
+  <div style="margin-bottom:16px">
+    <input id="tickerInput" class="input" placeholder="輸入股票代碼，例如 AAPL" value="AAPL">
+    <button id="analyzeBtn" class="btn">開始分析</button>
+  </div>
+
+  <div id="status" class="status" style="display:none"></div>
+  <pre id="result" class="result"></pre>
+</div>
+
+<script>
+const tickerInput = document.getElementById('tickerInput');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const statusDiv = document.getElementById('status');
+const resultDiv = document.getElementById('result');
+
+function showStatus(text, type='loading') {
+  statusDiv.textContent = text;
+  statusDiv.className = `status ${type}`;
+  statusDiv.style.display = 'block';
+}
+
+function showResult(data) {
+  resultDiv.style.display = 'block';
+  resultDiv.textContent = JSON.stringify(data, null, 2);
+}
+
+async function doAnalyze() {
+  const ticker = tickerInput.value.trim().toUpperCase();
+  if (!ticker) {
+    showStatus('請輸入股票代碼', 'error');
+    return;
+  }
+
+  analyzeBtn.disabled = true;
+  showStatus(`正在分析 ${ticker}...`, 'loading');
+  resultDiv.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/analyze/${ticker}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!data.success) {
+      showStatus('分析失敗，顯示備用數據', 'error');
+    } else {
+      showStatus('分析成功！', 'success');
+    }
+    showResult(data);
+  } catch (e) {
+    showStatus(`錯誤: ${e.message}`, 'error');
+  } finally {
+    analyzeBtn.disabled = false;
+  }
+}
+
+analyzeBtn.addEventListener('click', doAnalyze);
+tickerInput.addEventListener('keypress', e => e.key === 'Enter' && doAnalyze());
+</script>
+</body>
+</html>

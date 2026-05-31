@@ -1,91 +1,114 @@
-/**
- * StockAI 認證模組 — JWT + scrypt 密碼 hash
- */
-const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const path = require('path');
+const Database = require('better-sqlite3');
 
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
-const JWT_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 天
+// 初始化 SQLite 數據庫
+const db = new Database(path.join(__dirname, 'stock_users.db'));
 
-// ===== 密碼 Hash（使用 scrypt，無需 bcrypt 原生編譯）=====
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const derived = crypto.scryptSync(password, salt, 64, { N: 16384 }).toString('hex');
-  return `${salt}:${derived}`;
+// JWT 配置
+const JWT_SECRET = process.env.JWT_SECRET || 'stockai-secret-key-of-minimum-32-characters-2026';
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d'; // 7天
+
+// 初始化用戶數據庫
+function initUserDatabase() {
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        );
+        
+        -- 默認創建 admin 用戶（密碼 admin）
+        INSERT OR IGNORE INTO users (username, password_hash, role)
+        VALUES ('admin', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.vqBytfRtqJ/pOnO', 'admin');
+    `);
+}
+initUserDatabase();
+
+// 生成 hash 密碼
+async function hashPassword(password) {
+    const salt = await bcrypt.genSalt(10);
+    return await bcrypt.hash(password, salt);
 }
 
-function verifyPassword(password, stored) {
-  const [salt, derived] = stored.split(':');
-  if (!salt || !derived) return false;
-  const hash = crypto.scryptSync(password, salt, 64, { N: 16384 }).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(derived));
+// 驗證密碼
+async function verifyPassword(password, hash) {
+    return await bcrypt.compare(password, hash);
 }
 
-// ===== JWT（簡潔 HMAC 方案，與 #09 一致）=====
+// 獲取用戶
+function getUserByUsername(username) {
+    return db.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ?').get(username);
+}
+
+// 生成 JWT
 function signJWT(payload) {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify({
-    ...payload,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + Math.floor(JWT_EXPIRY / 1000),
-  })).toString('base64url');
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
-  return `${header}.${body}.${signature}`;
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 }
 
+// 驗證 JWT
 function verifyJWT(token) {
-  try {
-    const [header, body, signature] = token.split('.');
-    if (!header || !body || !signature) return null;
-    const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
-    if (signature !== expectedSig) return null;
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
-  } catch (e) {
-    return null;
-  }
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+        return null;
+    }
 }
 
-// ===== 認證中間件 =====
+// 認證中間件
 function authMiddleware(req, res, next) {
-  // 允許無需登錄的路徑
-  const publicPaths = [
-    '/api/auth/login', '/api/auth/register',
-    '/api/health', '/api/config', '/api/market/indices',
-    '/api/sector',
-  ];
-  if (publicPaths.some(p => req.path === p || req.path.startsWith(p + '/'))) {
-    return next();
-  }
-  // 靜態文件和非 API 路徑放行
-  if (!req.path.startsWith('/api/')) return next();
-
-  // 分析/報價/聊天/K線 — 允許未登錄使用但記錄用戶（如有）
-  const optionalAuthPaths = ['/api/analyze', '/api/quote', '/api/quotes', '/api/chat', '/api/chart/', '/api/save-analysis', '/api/analysis-history', '/api/user-context'];
-  const isOptional = optionalAuthPaths.some(p => req.path.startsWith(p));
-
-  const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');
-  if (token) {
-    const payload = verifyJWT(token);
-    if (payload) {
-      req.user = { userId: payload.userId, username: payload.username, role: payload.role };
-    } else {
-      res.clearCookie('token');
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || 
+                  req.cookies.stockai_token;
+    if (!token) {
+        return res.status(401).json({ error: '請先登入' });
     }
-  }
+    const decoded = verifyJWT(token);
+    if (!decoded) {
+        return res.status(401).json({ error: '無效或已過期的憑證，請重新登入' });
+    }
+    // 注意：單機模式，無需從DB查詢
+    req.user = decoded;
+    next();
+}
 
-  if (!req.user && !isOptional) {
-    return res.status(401).json({ error: '請先登錄', needLogin: true });
-  }
+// 登入驗證
+async function checkLogin(username, password) {
+    const user = getUserByUsername(username);
+    if (!user) return null;
+    const match = await verifyPassword(password, user.password_hash);
+    return match ? { userId: user.id, username: user.username, role: user.role } : null;
+}
 
-  next();
+// 更改用戶名
+function updateUsername(userId, newUsername) {
+    try {
+        const result = db.prepare('UPDATE users SET username = ? WHERE id = ?').run(newUsername, userId);
+        return result.changes > 0;
+    } catch (e) {
+        return false; // UNIQUE 約束錯誤
+    }
+}
+
+// 更改密碼
+async function updatePassword(userId, newPassword) {
+    const newHash = await hashPassword(newPassword);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+    return true;
 }
 
 module.exports = {
-  hashPassword,
-  verifyPassword,
-  signJWT,
-  verifyJWT,
-  authMiddleware,
-  JWT_EXPIRY,
+    db,
+    hashPassword,
+    verifyPassword,
+    signJWT,
+    verifyJWT,
+    authMiddleware,
+    JWT_EXPIRY,
+    checkLogin,
+    updateUsername,
+    updatePassword
 };

@@ -33,76 +33,12 @@ function getSector(ticker) {
 const DEFAULT_SECTORS = ['科技','消費','金融','通訊','醫療','能源','工業','材料','地產','公用'];
 
 const app = express();
-const PORT = process.env.PORT || 3007;
+const PORT = process.env.PORT || 3001;
 
 // AI Gateway 整合 — 所有 AI 請求透過 Gateway 轉發
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:3005';
 const GATEWAY_API_PATH = process.env.GATEWAY_API_PATH || '/api/query';
 const APP_ID = process.env.APP_ID || 'stock-ai';
-
-// 添加 `/api/moat/:ticker` 端點定義
-app.get('/api/moat/:ticker', async (req, res) => {
-  const ticker = req.params.ticker?.toUpperCase();
-  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
-  try {
-    const result = await new Promise((resolve) => {
-      // 傳入 `--moat` 參數調用護城河分析
-      const python = spawn('python3', [path.join(__dirname, 'financial_data.py'), ticker, '--moat']);
-      let data = '';
-      python.stdout.on('data', (chunk) => {
-        data += chunk;
-      });
-      python.stderr.on('data', (chunk) => {
-        console.error('護城河數據錯誤:', chunk.toString());
-      });
-      python.on('close', (code) => {
-        if (code === 0 && data) {
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            console.error('護城河數據解析失敗:', e.message);
-            resolve({ success: false, error: '解析失敗', raw: data });
-          }
-        } else {
-          console.error('護城河數據查詢失敗，退出碼:', code);
-          resolve({
-            success: false,
-            error: '護城河數據查詢失敗',
-            moat: {
-              brand: '✅',
-              cost: '⚠️ 需進一步分析成本結構',
-              network: '⚠️ 視具體業務模式而定',
-              switching: '⚠️ 客戶黏著度待評估'
-            }
-          });
-        }
-      });
-    });
-    
-    // 回退模擬數據
-    if (!result.success) {
-      result.moat = {
-        brand: '✅',
-        cost: '⚠️ 需進一步分析成本結構',
-        network: '⚠️ 視具體業務模式而定',
-        switching: '⚠️ 客戶黏著度待評估'
-      };
-      result.note = '護城河數據為模擬值';
-    }
-    res.json(result);
-  } catch (e) {
-    console.error('護城河API錯誤:', e.message);
-    res.status(500).json({
-      error: '護城河API錯誤',
-      moat: {
-        brand: '✅',
-        cost: '⚠️',
-        network: '⚠️',
-        switching: '⚠️'
-      }
-    });
-  }
-});
 
 /**
  * 透過 AI Gateway 發送 AI 請求
@@ -184,64 +120,6 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
-
-// ============================================
-// 財務數據 API（巴菲特/芒格系統，不需要登錄）
-// ============================================
-
-// 財務指標 API
-app.get('/api/financial/:ticker', async (req, res) => {
-  const ticker = req.params.ticker?.toUpperCase();
-  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
-  
-  try {
-    const result = await new Promise((resolve) => {
-      const python = spawn('python3', [path.join(__dirname, 'financial_data.py'), ticker]);
-      let data = '';
-      python.stdout.on('data', (chunk) => { data += chunk; });
-      python.stderr.on('data', (chunk) => { console.error('財務數據錯誤:', chunk.toString()); });
-      python.on('close', (code) => {
-        if (code === 0 && data) {
-          try { resolve(JSON.parse(data)); }
-          catch (e) { resolve({ success: false, error: '解析失敗' }); }
-        } else {
-          resolve({ success: false, error: '財務數據查詢失敗' });
-        }
-      });
-    });
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: '財務數據API錯誤' });
-  }
-});
-
-// 內在價值估算 API
-app.get('/api/intrinsic-value/:ticker', async (req, res) => {
-  const ticker = req.params.ticker?.toUpperCase();
-  const price = parseFloat(req.query.price) || 100;
-  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
-  
-  try {
-    const result = await new Promise((resolve) => {
-      const python = spawn('python3', [path.join(__dirname, 'financial_data.py'), ticker, '--iv', price.toString()]);
-      let data = '';
-      python.stdout.on('data', (chunk) => { data += chunk; });
-      python.on('close', (code) => {
-        if (code === 0 && data) {
-          try { resolve(JSON.parse(data)); }
-          catch (e) { resolve({ success: false, error: '解析失敗' }); }
-        } else {
-          resolve({ success: false, error: '內在價值估算失敗' });
-        }
-      });
-    });
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: '內在價值API錯誤' });
-  }
-});
-
-// 其他 API 需要認證
 app.use(authMiddleware);
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1997,7 +1875,12 @@ app.get('/api/favorites/ticker/:ticker', (req, res) => {
   }
 });
 
-// ============================================
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`📈 美股 AI 投顧助手已啟動: http://0.0.0.0:${PORT}`);
+  console.log(`🔗 Gateway: ${GATEWAY_URL}`);
+  console.log(`📱 App ID: ${APP_ID}`);
+});
+
 // 分析记录保存 API
 app.post('/api/save-analysis', (req, res) => {
   const { ticker, type, content, quote, conclusion } = req.body;
@@ -2045,38 +1928,3 @@ ${conclusion || '无'}
   }
   
   res.json({ success: true, filename });
-});
-
-// 获取历史分析记录
-app.get('/api/analysis-history', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  
-  const memoryDir = path.join(__dirname, '..', 'memory', 'analysis');
-  if (!fs.existsSync(memoryDir)) {
-    return res.json({ success: true, records: [] });
-  }
-  
-  const files = fs.readdirSync(memoryDir)
-    .filter(f => f.endsWith('.json'))
-    .sort((a, b) => b.localeCompare(a))
-    .slice(0, 20);
-  
-  const records = files.map(f => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(memoryDir, f), 'utf8'));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-  
-  res.json({ success: true, records });
-});
-
-// 啟動服務
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`📈 美股 AI 投顧助手已啟動（監聽: 0.0.0.0:${PORT}）`);
-  console.log(`🔗 Gateway: ${GATEWAY_URL}`);
-  console.log(`📱 App ID: ${APP_ID}`);
-  console.log(`📊 巴菲特/芒格價值投資系統已就緒`);
-});

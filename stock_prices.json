@@ -1,0 +1,162 @@
+{
+  "ARM": {
+    "name": "ARM Holdings plc",
+    "price": 335.20,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 335.20,
+    "high": 338.50,
+    "low": 328.10,
+    "volume": 12500000
+  },
+  "CI": {
+    "name": "Cigna Group",
+    "price": 284.33,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 284.33,
+    "high": 287.00,
+    "low": 282.00,
+    "volume": 3500000
+  },
+  "EPAM": {
+    "name": "EPAM Systems",
+    "price": 101.43,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 101.43,
+    "high": 103.00,
+    "low": 100.00,
+    "volume": 1800000
+  },
+  "NVDA": {
+    "name": "NVIDIA Corporation",
+    "price": 214.25,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 214.25,
+    "high": 217.00,
+    "low": 211.50,
+    "volume": 75000000
+  },
+  "TSLA": {
+    "name": "Tesla Inc.",
+    "price": 198.98,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 198.98,
+    "high": 214.33,
+    "low": 189.25,
+    "volume": 55488122
+  },
+  "GPRO": {
+    "name": "GoPro Inc.",
+    "price": 4.25,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 4.25,
+    "high": 4.35,
+    "low": 4.08,
+    "volume": 2500000
+  },
+  "AAPL": {
+    "name": "Apple Inc.",
+    "price": 312.51,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 312.51,
+    "high": 312.76,
+    "low": 309.57,
+    "volume": 44630908
+  },
+  "MSFT": {
+    "name": "Microsoft Corporation",
+    "price": 418.57,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 418.57,
+    "high": 420.50,
+    "low": 417.20,
+    "volume": 18500000
+  },
+  "GOOGL": {
+    "name": "Alphabet Inc.",
+    "price": 178.90,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 178.90,
+    "high": 180.20,
+    "low": 176.80,
+    "volume": 22100000
+  },
+  "AMZN": {
+    "name": "Amazon.com Inc.",
+    "price": 228.50,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 228.50,
+    "high": 230.00,
+    "low": 224.50,
+    "volume": 35200000
+  },
+  "META": {
+    "name": "Meta Platforms Inc.",
+    "price": 512.30,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 512.30,
+    "high": 515.60,
+    "low": 501.20,
+    "volume": 15800000
+  },
+  "AMD": {
+    "name": "Advanced Micro Devices",
+    "price": 158.40,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 158.40,
+    "high": 160.50,
+    "low": 155.80,
+    "volume": 45600000
+  },
+  "NFLX": {
+    "name": "Netflix Inc.",
+    "price": 628.90,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 628.90,
+    "high": 632.00,
+    "low": 615.50,
+    "volume": 5200000
+  },
+  "BRK.B": {
+    "name": "Berkshire Hathaway",
+    "price": 458.20,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 458.20,
+    "high": 460.50,
+    "low": 455.80,
+    "volume": 2800000
+  },
+  "JPM": {
+    "name": "JPMorgan Chase & Co.",
+    "price": 248.50,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 248.50,
+    "high": 250.00,
+    "low": 245.50,
+    "volume": 8200000
+  },
+  "V": {
+    "name": "Visa Inc.",
+    "price": 312.40,
+    "change": 0.00,
+    "changePercent": 0.00,
+    "prevClose": 312.40,
+    "high": 314.80,
+    "low": 311.20,
+    "volume": 6100000
+  }
+}

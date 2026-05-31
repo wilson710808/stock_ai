@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock AI 登入</title>
+    <style>
+        body {
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            color: #1a1a2e;
+        }
+        .container {
+            width: 100%;
+            max-width: 440px;
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+        }
+        h1 {
+            font-size: 22px;
+            font-weight: 600;
+            text-align: center;
+            color: #1f2937;
+            margin-bottom: 32px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #374151;
+        }
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            background: white;
+            font-family: inherit;
+        }
+        input:focus {
+            border-color: #0C63E4;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(12, 99, 228, 0.15);
+        }
+        button {
+            width: 100%;
+            background: #007BFF;
+            color: white;
+            border: none;
+            padding: 14px 16px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #0063E0;
+        }
+        button:disabled {
+            background: #a5d4ff;
+            cursor: not-allowed;
+        }
+        .error-message {
+            color: #d32f2f;
+            font-size: 14px;
+            margin-top: 8px;
+            text-align: center;
+        }
+        .info-message {
+            color: #0C63E4;
+            font-size: 14px;
+            margin-top: 16px;
+            text-align: center;
+        }
+        a {
+            color: #007BFF;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>歡迎登入 Stock AI</h1>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">用戶名</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">密碼</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div id="errorMessage" class="error-message"></div>
+            <button type="submit" id="loginBtn">登入</button>
+        </form>
+        <div class="info-message">
+            初始管理員帳號：admin<br>
+            初始密碼：admin
+        </div>
+        <div style="text-align: center; margin-top: 16px;">
+            <a href="register.html">註冊新帳號</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            
+            document.getElementById('loginBtn').disabled = true;
+            document.getElementById('errorMessage').textContent = '';
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                
+                if (!data.success) {
+                    document.getElementById('errorMessage').textContent = data.error || '登入失敗';
+                } else {
+                    // 登入成功，跳轉到主頁
+                    window.location.href = '/';
+                }
+            } catch (err) {
+                document.getElementById('errorMessage').textContent = '登入過程發生錯誤';
+            } finally {
+                document.getElementById('loginBtn').disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

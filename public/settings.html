@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>帳號設定 - Stock AI</title>
+    <style>
+        body {
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #ffffff;
+            padding: 15px 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            border-radius: 12px;
+        }
+        .app-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+        }
+        .logout-btn {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+        h2 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #f1f3f4;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .btn-danger {
+            background: #ff6b6b;
+        }
+        .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .success-message {
+            color: #28a745;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <div class="app-title">Stock AI</div>
+        <button class="logout-btn" onclick="window.location.href='/'">返回主頁</button>
+    </div>
+    
+    <div class="container">
+        <div class="card">
+            <h2>帳號設定</h2>
+            <div id="userStatus"></div>
+            
+            <div class="form-group">
+                <label>當前用戶：<strong id="currentUser">載入中...</strong> (<a href="#" id="logoutLink">登出</a>)</label>
+            </div>
+            
+            <h3>更改用戶名</h3>
+            <div class="form-group">
+                <input type="text" id="newUsername" placeholder="輸入新用戶名">
+                <div id="usernameError" class="error-message"></div>
+                <button id="updateUsernameBtn" class="btn">更新用戶名</button>
+            </div>
+            
+            <h3>更改密碼</h3>
+            <div class="form-group">
+                <input type="password" id="oldPassword" placeholder="當前密碼">
+                <input type="password" id="newPassword" placeholder="新密碼">
+                <input type="password" id="confirmPassword" placeholder="確認新密碼">
+                <div id="passwordError" class="error-message"></div>
+                <div id="passwordSuccess" class="success-message"></div>
+                <button id="updatePasswordBtn" class="btn btn-danger">更改密碼</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 當前用戶狀態
+        async function checkUserStatus() {
+            try {
+                const response = await fetch('/api/auth/me');
+                const data = await response.json();
+
+                if (!data.loggedIn) {
+                    window.location.href = '/login.html';
+                } else {
+                    document.getElementById('currentUser').textContent = data.username;
+                    document.getElementById('logoutLink').href = '/api/auth/logout';
+                }
+            } catch(ex) {
+                window.location.href = '/login.html';
+            }
+        }
+        
+        // 更改用戶名
+        document.getElementById('updateUsernameBtn').addEventListener('click', async () => {
+            const newUsername = document.getElementById('newUsername').value.trim();
+            
+            try {
+                const response = await fetch('/api/auth/profile', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ newUsername })
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    document.getElementById('usernameError').textContent = data.error || '更新失敗';
+                } else {
+                    document.getElementById('currentUser').textContent = newUsername;
+                    document.getElementById('usernameError').textContent = '';
+                    document.getElementById('newUsername').value = '';
+                }
+            } catch(err) {
+                document.getElementById('usernameError').textContent = '網絡錯誤：' + err.message;
+            }
+        });
+        
+        // 更改密碼
+        document.getElementById('updatePasswordBtn').addEventListener('click', async () => {
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (newPassword !== confirmPassword) {
+                document.getElementById('passwordError').textContent = '新密碼不匹配';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/password', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ oldPassword, newPassword })
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    document.getElementById('passwordError').textContent = data.error || '密碼更新失敗';
+                    document.getElementById('passwordSuccess').textContent = '';
+                } else {
+                    document.getElementById('passwordError').textContent = '';
+                    document.getElementById('passwordSuccess').textContent = '密碼已成功更新！';
+                    document.getElementById('oldPassword').value = '';
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                }
+            } catch(err) {
+                document.getElementById('passwordError').textContent = '網絡錯誤：' + err.message;
+{}

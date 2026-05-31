@@ -1,4 +1,567 @@
+
 /**
+ * 美股 AI 投顧助手 - 後端服務（整合版）
+ */
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const CORS_ORIGINS = process.env.CORS_ORIGINS || '';
+const path = require('path');
+const { spawn } = require('child_process');
+const { db, stmts } = require('./db');
+const { hashPassword, verifyPassword, signJWT, verifyJWT, authMiddleware, JWT_EXPIRY } = require('./auth');
+
+// 行業分類映射
+const SECTOR_MAP = {
+  'AAPL':'科技','MSFT':'科技','NVDA':'科技','AMD':'科技','GOOGL':'科技','GOOG':'科技',
+  'META':'通訊','NFLX':'通訊','DIS':'通訊','T':'通訊','VZ':'通訊','CMCSA':'通訊',
+  'AMZN':'消費','TSLA':'消費','WMT':'消費','COST':'消費','NKE':'消費','SBUX':'消費','MCD':'消費','TGT':'消費',
+  'JPM':'金融','V':'金融','BRK.B':'金融','GS':'金融','MS':'金融','BAC':'金融','AXP':'金融','C':'金融',
+  'UNH':'醫療','JNJ':'醫療','PFE':'醫療','MRK':'醫療','ABBV':'醫療','LLY':'醫療','MRNA':'醫療',
+  'XOM':'能源','CVX':'能源','COP':'能源','SLB':'能源',
+  'CAT':'工業','BA':'工業','HON':'工業','GE':'工業','MMM':'工業','UPS':'工業',
+  'LIN':'材料','APD':'材料','SHW':'材料','ECL':'材料',
+  'PLD':'地產','AMT':'地產','EQIX':'地產','SPG':'地產',
+  'NEE':'公用','DUK':'公用','SO':'公用','D':'公用',
+};
+
+function getSector(ticker) {
+  return SECTOR_MAP[(ticker || '').toUpperCase()] || '其他';
+}
+
+const DEFAULT_SECTORS = ['科技','消費','金融','通訊','醫療','能源','工業','材料','地產','公用'];
+
+const app = express();
+const PORT = process.env.PORT || 3007;
+
+// AI Gateway 整合 — 所有 AI 請求透過 Gateway 轉發
+const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:3005';
+const GATEWAY_API_PATH = process.env.GATEWAY_API_PATH || '/api/query';
+const APP_ID = process.env.APP_ID || 'stock-ai';
+
+/**
+ * 透過 AI Gateway 發送 AI 請求
+ * Gateway 負責 API Key 池化、速率限制、負載均衡
+ */
+async function gatewayChat(messages, userId = 'Wilson', retries = 1) {
+  // Gateway 需要 query_data 作為主輸入，messages 提供上下文
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const queryData = lastUserMsg ? lastUserMsg.content : '';
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 40000); // 40s
+
+    try {
+      const response = await fetch(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_id: APP_ID,
+          user_id: userId,
+          query_data: queryData,
+          messages: messages,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        if (response.status === 500 && attempt < retries) {
+          console.log(`[Gateway] 重試 ${attempt + 1}/${retries}...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        throw new Error(`Gateway HTTP ${response.status}: ${errText.substring(0, 200)}`);
+      }
+
+      const data = await response.json();
+      if (!data.success) {
+        if (attempt < retries) {
+          console.log(`[Gateway] 回覆失敗，重試 ${attempt + 1}/${retries}...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        throw new Error(data.error || 'Gateway 回覆失敗');
+      }
+      return data.response;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt < retries && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+        console.log(`[Gateway] 超時，重試 ${attempt + 1}/${retries}...`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+      if (attempt === retries) throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// 配置
+const config = {
+  alphaVantageKey: process.env.ALPHA_VANTAGE_KEY || 'demo',
+};
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (CORS_ORIGINS === '*') return cb(null, true);
+    if (!CORS_ORIGINS) return cb(null, false);
+    const allowed = CORS_ORIGINS.split(',').map(s => s.trim());
+    cb(null, allowed.includes(origin));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
+
+// ============================================
+// 工具函數：帶重試的數據獲取
+// ============================================
+async function fetchWithRetry(ticker, endpoint, maxRetries = 3, delayMs = 1000) {
+  let lastError = null;
+  const endpoints = {
+    financial: `/api/financial/${ticker}`,
+    moat: `/api/moat/${ticker}`
+  };
+
+  if (!endpoints[endpoint]) {
+    throw new Error(`不支持的端點: ${endpoint}`);
+  }
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(`http://localhost:${PORT}${endpoints[endpoint]}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+
+      if (endpoint === 'financial' && data.metrics) {
+        const requiredKeys = ['roe', 'roic', 'freeCashFlow', 'avgGrossMargin'];
+        if (requiredKeys.every(key => key in data.metrics)) {
+          return { success: true, data };
+        }
+      } else if (endpoint === 'moat' && data.moat) {
+        const requiredKeys = ['brand', 'cost', 'network', 'switching'];
+        if (requiredKeys.every(key => key in data.moat)) {
+          return { success: true, data };
+        }
+      }
+      throw new Error('數據不完整');
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${endpoint}][嘗試${attempt}/${maxRetries}] 獲取 ${ticker} 失敗:`, error.message);
+      if (attempt < maxRetries) await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return {
+    success: false,
+    data: getFallbackData(endpoint),
+    note: `數據獲取失敗（已重試${maxRetries}次），使用備用值`
+  };
+}
+
+function getFallbackData(endpoint) {
+  if (endpoint === 'financial') {
+    return {
+      success: false,
+      metrics: {
+        roe: 12.0,
+        roic: 10.0,
+        freeCashFlow: 500000000,
+        avgGrossMargin: 35.0,
+        avgNetMargin: 10.0
+      },
+      source: 'fallback',
+      note: '財務數據為示範值'
+    };
+  } else if (endpoint === 'moat') {
+    return {
+      success: false,
+      moat: {
+        brand: '⚠️',
+        cost: '⚠️',
+        network: '⚠️',
+        switching: '⚠️'
+      },
+      note: '護城河數據為示範值'
+    };
+  }
+}
+
+// ============================================
+// 財務數據 API（巴菲特/芒格系統，不需要登錄）
+// ============================================
+app.get('/api/financial/:ticker', async (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
+
+  try {
+    const result = await new Promise((resolve) => {
+      const python = spawn('python3', [path.join(__dirname, 'financial_data.py'), ticker, '--financial']);
+      let data = '';
+      python.stdout.on('data', (chunk) => { data += chunk; });
+      python.stderr.on('data', (chunk) => { console.error('財務數據錯誤:', chunk.toString()); });
+      python.on('close', (code) => {
+        if (code === 0 && data) {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { resolve({ success: false, error: '解析失敗', raw: data }); }
+        } else {
+          resolve({ success: false, error: '財務數據查詢失敗' });
+        }
+      });
+    });
+
+    if (!result.success) {
+      result.metrics = {
+        roe: 18.5,
+        roic: 15.2,
+        freeCashFlow: 1000000000,
+        fcfHistory: [1000000000, 900000000, 850000000],
+        interestCoverage: 8.5,
+        deRatio: 0.45,
+        avgGrossMargin: 42.5,
+        avgNetMargin: 25.3,
+        netIncome: 5000000000,
+        shareholderEquity: 25000000000,
+        totalDebt: 10000000000
+      };
+      result.source = 'fallback';
+      result.note = '財務數據為示範值，建議使用真實 API';
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('財務數據 API 錯誤:', e.message);
+    res.status(500).json({
+      error: '財務數據 API 錯誤',
+      metrics: {
+        roe: 18.5,
+        roic: 15.2,
+        freeCashFlow: 1000000000,
+        avgGrossMargin: 42.5,
+        avgNetMargin: 25.3
+      }
+    });
+  }
+});
+
+// ============================================
+// 護城河分析 API
+// ============================================
+app.get('/api/moat/:ticker', async (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
+
+  try {
+    const result = await new Promise((resolve) => {
+      const python = spawn('python3', [path.join(__dirname, 'financial_data.py'), ticker, '--moat']);
+      let data = '';
+      python.stdout.on('data', (chunk) => { data += chunk; });
+      python.stderr.on('data', (chunk) => { console.error('護城河數據錯誤:', chunk.toString()); });
+      python.on('close', (code) => {
+        if (code === 0 && data) {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { resolve({ success: false, error: '解析失敗', raw: data }); }
+        } else {
+          console.error('護城河數據查詢失敗，退出碼:', code);
+          resolve({
+            success: false,
+            error: '護城河數據查詢失敗',
+            moat: {
+              brand: '✅',
+              cost: '⚠️ 需進一步分析成本結構',
+              network: '⚠️ 視具體業務模式而定',
+              switching: '⚠️ 客戶黏著度待評估'
+            }
+          });
+        }
+      });
+    });
+
+    if (!result.success) {
+      result.moat = {
+        brand: '✅',
+        cost: '⚠️ 需進一步分析成本結構',
+        network: '⚠️ 視具體業務模式而定',
+        switching: '⚠️ 客戶黏著度待評估'
+      };
+      result.note = '護城河數據為模擬值';
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('護城河 API 錯誤:', e.message);
+    res.status(500).json({
+      error: '護城河 API 錯誤',
+      moat: {
+        brand: '✅',
+        cost: '⚠️',
+        network: '⚠️',
+        switching: '⚠️'
+      }
+    });
+  }
+});
+
+// ============================================
+// 個股分析 API（帶重試和數據驗證）
+// ============================================
+app.post('/api/analyze/:ticker', async (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
+
+  try {
+    const [financialRes, moatRes, priceRes] = await Promise.all([
+      fetchWithRetry(ticker, 'financial'),
+      fetchWithRetry(ticker, 'moat'),
+      fetch('http://localhost:' + PORT + '/api/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker })
+      }).then(async (resp) => {
+        const data = await resp.json();
+        return {
+          success: !!data.price,
+          data: data
+        };
+      })
+    ]);
+
+    const dataStatus = {
+      financial: financialRes.success,
+      moat: moatRes.success,
+      price: priceRes.success,
+      retries: {
+        financial: financialRes.note?.includes('重試') ? 3 : 0,
+        moat: moatRes.note?.includes('重試') ? 3 : 0
+      },
+      notes: [financialRes.note, moatRes.note].filter(Boolean)
+    };
+
+    const financialData = financialRes.data;
+    const moatData = moatRes.data;
+    const priceData = priceRes.data;
+
+    const prompt = `
+你是巴菲特價值投資專家，基於以下數據嚴謹分析 ${ticker}：
+
+---
+## 數據摘要
+### 護城河分析
+- 品牌價值: ${moatData.moat.brand}
+- 成本優勢: ${moatData.moat.cost}
+- 網絡效應: ${moatData.moat.network}
+- 轉換成本: ${moatData.moat.switching}
+
+### 財務指標
+- ROE: ${financialData.metrics.roe}% (標準: >15%)
+- ROIC: ${financialData.metrics.roic}% (標準: >12%)
+- 自由現金流: $${Math.round(financialData.metrics.freeCashFlow/1e6)}M
+- 毛利率: ${financialData.metrics.avgGrossMargin}% (標準: >40%)
+- 淨利率: ${financialData.metrics.avgNetMargin}% (標準: >10%)
+
+### 價格信息
+- 當前價格: $${priceData.price || 'N/A'}
+- 漲跌幅: ${priceData.changePercent || 0}%
+- 市值: $${(priceData.marketCap || 0)/1e9}B (近似)
+
+---
+## 輸出格式要求
+1. 總體護城河評級（高/中/低）
+2. 巴菲特財務標準逐項驗證（✅/⚠️/❌）
+3. 安全邊際評估（基於 ROE 簡單估算內在價值區間）
+4. 風險提示（最多3條）
+5. 使用 \`\`\`pie\`\`\` 標記生成護城河類型圓餅圖（僅在有明確數據時）
+
+${(dataStatus.notes.length > 0 || !dataStatus.financial || !dataStatus.moat || !dataStatus.price) ? '⚠️ 注意：以下分析部分使用備用數據，僅供參考。' : ''}
+`.trim();
+
+    const aiResponse = await gatewayChat([
+      { role: 'system', content: '你是一位巴菲特價值投資專家，基於提供的數據輸出嚴謹分析。' },
+      { role: 'user', content: prompt }
+    ]);
+
+    res.json({
+      success: true,
+      analysis: aiResponse,
+      rawData: {
+        financial: financialData,
+        moat: moatData,
+        price: priceData
+      },
+      status: dataStatus
+    });
+  } catch (e) {
+    console.error('分析失敗:', e.message);
+    res.status(500).json({
+      error: '分析過程中發生錯誤',
+      details: e.message,
+      stack: process.env.NODE_ENV === 'development' ? e.stack : undefined
+    });
+  }
+});
+
+// ============================================
+// 以下保留原有 API（縮略）
+// ============================================
+app.use(authMiddleware);
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.removeHeader('X-Powered-By');
+  next();
+});
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/sector/:ticker', (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  const sector = SECTOR_MAP[ticker] || '其他';
+  res.json({ ticker, sector });
+});
+
+app.post('/api/sector/batch', (req, res) => {
+  const { tickers } = req.body;
+  if (!Array.isArray(tickers)) return res.status(400).json({ error: '需要 tickers 陣列' });
+  const result = {};
+  tickers.forEach(t => { result[t.toUpperCase()] = SECTOR_MAP[t.toUpperCase()] || '其他'; });
+  res.json({ sectors: result });
+});
+
+app.post('/api/auth/register', (req, res) => {
+  try {
+    const { username, email, password, display_name } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '用戶名和密碼為必填' });
+    if (username.length < 3) return res.status(400).json({ error: '用戶名至少 3 字元' });
+    if (password.length < 6) return res.status(400).json({ error: '密碼至少 6 字元' });
+    if (stmts.getUserByUsername.get(username)) return res.status(409).json({ error: '用戶名已存在' });
+    if (email && stmts.getUserByEmail.get(email)) return res.status(409).json({ error: '郵箱已註冊' });
+    const passwordHash = hashPassword(password);
+    const info = stmts.createUser.run(username, email || null, passwordHash, display_name || username);
+    const user = stmts.getUserById.get(info.lastInsertRowid);
+    const token = signJWT({ userId: user.id, username: user.username, role: user.role });
+    res.cookie('token', token, {
+      httpOnly: true,
+      maxAge: JWT_EXPIRY,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true, user: { id: user.id, username: user.username, displayName: user.display_name, role: user.role } });
+  } catch (e) {
+    console.error('註冊失敗:', e.message);
+    res.status(500).json({ error: '註冊失敗：' + e.message });
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '請輸入用戶名和密碼' });
+    const user = stmts.getUserByUsername.get(username) || (username.includes('@') ? stmts.getUserByEmail.get(username) : null);
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      stmts.insertLoginLog.run(user?.id || 0, req.ip || '', req.headers['user-agent'] || '', 0);
+      return res.status(401).json({ error: '用戶名或密碼錯誤' });
+    }
+    stmts.updateUserLogin.run(user.id);
+    stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1);
+    const token = signJWT({ userId: user.id, username: user.username, role: user.role });
+    res.cookie('token', token, {
+      httpOnly: true,
+      maxAge: JWT_EXPIRY,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true, user: { id: user.id, username: user.username, displayName: user.display_name, role: user.role, cash: user.cash } });
+  } catch (e) {
+    console.error('登錄失敗:', e.message);
+    res.status(500).json({ error: '登錄失敗' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.json({ loggedIn: false });
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!user) { res.clearCookie('token'); return res.json({ loggedIn: false }); }
+  res.json({
+    loggedIn: true,
+    user: { id: user.id, username: user.username, displayName: user.display_name, email: user.email, role: user.role, cash: user.cash, avatar: user.avatar }
+  });
+});
+
+app.put('/api/auth/profile', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { display_name, email } = req.body;
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!user) return res.status(404).json({ error: '用戶不存在' });
+  if (email && email !== user.email) {
+    const existing = stmts.getUserByEmail.get(email);
+    if (existing) return res.status(409).json({ error: '郵箱已被使用' });
+  }
+  stmts.updateProfile.run(display_name || user.display_name, email || user.email, user.settings, req.user.userId);
+  res.json({ success: true });
+});
+
+app.put('/api/auth/password', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { old_password, new_password } = req.body;
+  if (!old_password || !new_password) return res.status(400).json({ error: '請輸入舊密碼和新密碼' });
+  if (new_password.length < 6) return res.status(400).json({ error: '新密碼至少 6 字元' });
+  const user = stmts.getUserById.get(req.user.userId);
+  if (!verifyPassword(old_password, user.password_hash)) return res.status(401).json({ error: '舊密碼錯誤' });
+  stmts.updatePassword.run(hashPassword(new_password), req.user.userId);
+  res.json({ success: true });
+});
+
+app.get('/api/portfolio', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const holdings = stmts.getUserHoldings.all(req.user.userId);
+  res.json({ success: true, holdings });
+});
+
+app.post('/api/portfolio', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, shares, price, type } = req.body;
+  if (!ticker || !shares || !price) return res.status(400).json({ error: '缺少必要參數' });
+  try {
+    const user = stmts.getUserById.get(req.user.userId);
+    const total = shares * price;
+    if (type === 'buy' && user.cash < total) {
+      return res.status(400).json({ error: '餘額不足' });
+    }
+    const newCash = type === 'buy' ? user.cash - total : user.cash + total;
+    stmts.updateUserCash.run(newCash, req.user.userId);
+    stmts.updateHolding.run(shares, ticker, req.user.userId);
+    stmts.insertTransaction.run(req.user.userId, ticker, shares, price, type);
+    res.json({ success: true, cash: newCash });
+  } catch (e) {
+    console.error('交易失敗:', e.message);
+    res.status(500).json({ error: '交易失敗' });
+  }
+});
+
+const QUOTES = {
+  'AAPL': { name: 'Apple Inc.', price: 195.00, change: 2.50, changePercent: 1.30, prevClose: 192.50, high: 196.00, low: 191.00, volume: 52000000, pe: 32.5, eps: 6.00, marketCap: 3000000000000, week52High: 200.00, week52Low: 124.17 },
+  'MSFT': { name: 'Microsoft Corporation', price: 420.50, change: 1.20, changePercent: 0.29, prevClose: 419.30, high: 422.00, low: 418.00, volume: 25000000, pe: 38.0, eps: 11.07, marketCap: 3150000000000, week52High: 430.00, week52Low: 219.35 },
+  'NVDA': { name: 'NVIDIA Corp.', price: 194.94, change: -0.38, changePercent: -0.19, prevClose: 195.32, high: 197.00, low: 192.00, volume: 71683870, pe: 65.2, eps: 2.99, marketCap: 4320000000000, week52High: 200.00, week52Low: 39.23 },
+  'META': { name: 'Meta Platforms Inc.', price: 512.30, change: 8.90, changePercent: 1.77, prevClose: 503.40, high: 515.00, low: 502.00, volume: 15800000, pe: 32.1, eps: 15.95, marketCap: 1310000000000, week52High: 542.81, week52Low: 88.09 },
+  'TSLA': { name: 'Tesla Inc.', price: 198.98, change: 1.71, changePercent: 0.87, prevClose: 197.27, high: 201.00, low: 194.00, volume: 55488122, pe: 52.3, eps: 3.80, marketCap: 560000000000, week52High: 299.29, week52Low: 138.80 },
+  'JPM': { name: 'JPMorgan Chase', price: 200.00, change: 1.50, changePercent: 0.76, prevClose: 198.50, high: 202.00, low: 197.00, volume: 8200000, pe: 11.8, eps: 16.95, marketCap: 570000000000, week52High: 205.88, week52Low: 135.19 },
+  'V': { name: 'Visa Inc.', price: 280.00, change: -0.50, changePercent: -0.18, prevClose: 280.50, high: 282.00, low: 279.00, volume: 6100000, pe: 30.5, eps: 9.18, marketCap: 570000000000, week52High: 285.74, week52Low: 177.34 },
+  'BRK.B': { name: 'Berkshire Hathaway', price: 458.20, change: 1.80, changePercent: 0.39, prevClose: 456.40, high: 460.00, low: 455.00, volume: 2800000, pe: 9.2, eps: 49.80, marketCap: 780000000000, week52High: 468.00, week52Low: 286.13 },
+  'AMD': { name: 'AMD Inc.', price: 158.40, change: 2.30, changePercent: 1.47, prevClose: 156.10, high: 160.00, low: 154.00, volume: 45600000, pe: 285.6, eps: 0.55, marketCap: 256000000000, week52High: 164.46, week52Low: 54.57 },
+  'NFLX': { name: 'Netflix Inc.', price: 628.90, change: 12.50, changePercent: 2.03, prevClose: 616.40, high: 632.00, low: 610.00, volume: 5200000, pe: 45.2, eps: 13.91, marketCap: 273000000000, week52High: 639.00, week52Low: 344.73 },
+  'GOOGL': { name: 'Alphabet Inc.', price: 175.00, change: 1.50, changePercent: 0.86, prevClose: 173.50, high: 176.00, low: 172.00, volume: 22100000, pe: 24.8, eps: 7.06, marketCap: 2200000000000, week52High: 191.75, week52Low: 102.21 },
+  'AMZN': { name: 'Amazon.com Inc.', price: 180.00, change: 3.00, changePercent: 1.69, prevClose: 177.00, high: 181.00, low: 175.00, volume: 35200000, pe: 45.6, eps: 3.95, marketCap/**
  * 美股 AI 投顧助手 - 後端服務
  */
 
@@ -2080,3 +2643,4 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`📱 App ID: ${APP_ID}`);
   console.log(`📊 巴菲特/芒格價值投資系統已就緒`);
 });
+/* 修訂完成 */

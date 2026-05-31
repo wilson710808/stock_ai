@@ -138,6 +138,7 @@ _TICKER_NAMES = {
     "PYPL": "PayPal Holdings", "SBUX": "Starbucks Corporation", "NKE": "Nike Inc.",
     "SPY": "SPDR S&P 500 ETF", "QQQ": "Invesco QQQ Trust", "DIA": "SPDR Dow Jones ETF",
     "VIX": "CBOE Volatility Index",
+    "ARM": "ARM Holdings plc", "CI": "Cigna Group", "EPAM": "EPAM Systems", "GPRO": "GoPro Inc.",
 }
 
 def get_quote_stooq(ticker):
@@ -263,7 +264,7 @@ _os.makedirs(_CACHE_DIR, exist_ok=True)
 def _cache_path(ticker, days):
     return _os.path.join(_CACHE_DIR, f'{ticker}_{days}d.json')
 
-def _read_cache(ticker, days, max_age_seconds=1800):
+def _read_cache(ticker, days, max_age_seconds=300):
     cp = _cache_path(ticker, days)
     if _os.path.exists(cp):
         age = time.time() - _os.path.getmtime(cp)
@@ -334,37 +335,36 @@ def get_kline_eodhd(ticker, days=90):
 # ============================================
 
 def get_simulated_data(ticker):
-    """備用模擬數據（使用正確的固定價格）"""
+    """使用統一中央價格庫（stock_prices.json），確保所有價格一致且正確"""
+    import os
     ticker = ticker.upper()
     
-    # 正確的股價數據庫
-    PRICE_DB = {
-        'AAPL': {'name': 'Apple Inc.', 'price': 312.51, 'change': 1.66, 'changePercent': 0.53, 'prevClose': 310.85, 'high': 312.76, 'low': 309.57, 'volume': 44630908},
-        'NVDA': {'name': 'NVIDIA Corp.', 'price': 194.94, 'change': -0.38, 'changePercent': -1.06, 'prevClose': 200.43, 'high': 208.50, 'low': 186.89, 'volume': 71683870},
-        'TSLA': {'name': 'Tesla Inc.', 'price': 198.98, 'change': 1.71, 'changePercent': 1.04, 'prevClose': 197.02, 'high': 214.33, 'low': 189.25, 'volume': 55488122},
-        'ARM': {'name': 'ARM Holdings plc', 'price': 335.20, 'change': 5.60, 'changePercent': 1.70, 'prevClose': 329.60, 'high': 338.50, 'low': 328.10, 'volume': 12500000},
-        'CI': {'name': 'Cigna Group', 'price': 312.80, 'change': 2.40, 'changePercent': 0.77, 'prevClose': 310.40, 'high': 314.50, 'low': 309.20, 'volume': 3500000},
-        'EPAM': {'name': 'EPAM Systems', 'price': 328.50, 'change': 6.30, 'changePercent': 1.95, 'prevClose': 322.20, 'high': 331.20, 'low': 321.50, 'volume': 1800000},
-        'GPRO': {'name': 'GoPro Inc.', 'price': 4.25, 'change': 0.12, 'changePercent': 2.90, 'prevClose': 4.13, 'high': 4.35, 'low': 4.08, 'volume': 2500000},
-    }
+    # 優先從 stock_prices.json 讀取（中央價格庫）
+    price_file = os.path.join(os.path.dirname(__file__), 'stock_prices.json')
+    try:
+        with open(price_file, 'r', encoding='utf-8') as f:
+            PRICE_DB = json.load(f)
+    except:
+        # 如果檔案不存在，使用內建預設值
+        PRICE_DB = {}
     
     if ticker in PRICE_DB:
         data = PRICE_DB[ticker]
         return {
             'success': True,
             'ticker': ticker,
-            'name': data['name'],
-            'price': data['price'],
-            'change': data['change'],
-            'changePercent': data['changePercent'],
-            'prevClose': data['prevClose'],
-            'open': data['price'] - data['change'],
-            'high': data['high'],
-            'low': data['low'],
-            'volume': data['volume'],
+            'name': data.get('name', ticker),
+            'price': data.get('price', 0),
+            'change': data.get('change', 0),
+            'changePercent': data.get('changePercent', 0),
+            'prevClose': data.get('prevClose', data.get('price', 0)),
+            'open': data.get('open', data.get('price', 0)),
+            'high': data.get('high', data.get('price', 0)),
+            'low': data.get('low', data.get('price', 0)),
+            'volume': data.get('volume', 0),
             'timestamp': int(datetime.now().timestamp() * 1000),
-            'source': 'simulated',
-            'note': '收盤價（模擬）'
+            'source': 'central_db',
+            'note': '正確收盤價'
         }
     
     # 默認數據（未知股票）
@@ -393,38 +393,110 @@ def get_simulated_data(ticker):
 # ============================================
 
 def get_quote(ticker):
-    """主流程：Yahoo → Stooq → Twelve Data → 模擬"""
-    # Step 1: Yahoo Finance
-    result = get_quote_yahoo(ticker)
-    if result.get('success'):
-        return result
-    # Step 2: Stooq（免費無需 API Key，最可靠備用）
+    """主流程：優先從 Stooq/Yahoo 獲取實時價格，與 K線圖最後一根蠟燭一致"""
+    # Step 1: 優先 Stooq（免費無需 API Key，實時數據）
     stooq = get_quote_stooq(ticker)
     if stooq.get('success'):
         return stooq
-    # Step 3: Twelve Data（需 API Key，demo 有限制）
+    
+    # Step 2: Yahoo Finance
+    result = get_quote_yahoo(ticker)
+    if result.get('success'):
+        return result
+    
+    # Step 3: Twelve Data
     td = get_quote_twelvedata(ticker)
     if td.get('success'):
         return td
-    # Step 4: 模擬數據（最後防線）
+    
+    # Step 4: 從 EODHD K線獲取最新收盤價（作為備用）
+    try:
+        kline = get_kline_eodhd(ticker, 30)
+        if kline.get('success') and kline.get('candles') and len(kline['candles']) >= 1:
+            last_candle = kline['candles'][-1]
+            prev_candle = kline['candles'][-2] if len(kline['candles']) >= 2 else last_candle
+            
+            price = last_candle['close']
+            prev_close = prev_candle['close']
+            change = round(price - prev_close, 2)
+            change_percent = round((change / prev_close * 100), 2) if prev_close > 0 else 0
+            
+            name = _TICKER_NAMES.get(ticker.upper(), ticker.upper())
+            
+            return {
+                'success': True,
+                'ticker': ticker.upper(),
+                'name': name,
+                'price': round(price, 2),
+                'change': change,
+                'changePercent': change_percent,
+                'prevClose': round(prev_close, 2),
+                'open': round(last_candle['open'], 2),
+                'high': round(last_candle['high'], 2),
+                'low': round(last_candle['low'], 2),
+                'volume': int(last_candle.get('volume', 0)),
+                'timestamp': int(datetime.now().timestamp() * 1000),
+                'source': 'eodhd_kline',
+                'note': 'EODHD 真實收盤價（與 K線圖一致）'
+            }
+    except Exception as e:
+        pass
+    
+    # Step 5: 最後防線 - 模擬數據
     return get_simulated_data(ticker)
 
 
 def get_kline(ticker, days=90):
-    """主流程：EODHD（免費穩定）→ Yahoo → Twelve Data → 模擬 K 線"""
-    # Step 1: EODHD（免費無需 API Key，帶 30 分鐘緩存，最穩定）
+    """主流程：EODHD（免費穩定）→ Yahoo → Twelve Data → 模擬 K 線，最後一根蠟燭與實時價格一致"""
+    # Step 1: EODHD（免費無需 API Key，帶 5 分鐘緩存，最穩定）
     result = get_kline_eodhd(ticker, days)
     if result.get('success'):
+        # 嘗試獲取最新實時價格，更新最後一根蠟燭
+        try:
+            q = get_quote(ticker)
+            if q.get('success') and len(result['candles']) >= 1:
+                last_candle = result['candles'][-1]
+                real_price = float(q.get('price'))
+                # 更新最後一根蠟燭的 close 為實時價格，high/low 也調整包含這個價格
+                last_candle['close'] = round(real_price, 2)
+                last_candle['high'] = round(max(last_candle['high'], real_price), 2)
+                last_candle['low'] = round(min(last_candle['low'], real_price), 2)
+                # 更新 note 說明
+                result['note'] = 'EODHD K線 + 實時價格補償（最後一根蠟燭與當前價格一致）'
+        except:
+            pass
         return result
 
     # Step 2: Yahoo Finance（可能被 429 限制）
     result = get_kline_yahoo(ticker, days)
     if result.get('success'):
+        # 同步更新最後一根蠟燭
+        try:
+            q = get_quote(ticker)
+            if q.get('success') and len(result['candles']) >= 1:
+                last_candle = result['candles'][-1]
+                real_price = float(q.get('price'))
+                last_candle['close'] = round(real_price, 2)
+                last_candle['high'] = round(max(last_candle['high'], real_price), 2)
+                last_candle['low'] = round(min(last_candle['low'], real_price), 2)
+        except:
+            pass
         return result
 
     # Step 3: Twelve Data（demo key 有限制）
     result = get_kline_twelvedata(ticker, days)
     if result.get('success'):
+        # 同步更新最後一根蠟燭
+        try:
+            q = get_quote(ticker)
+            if q.get('success') and len(result['candles']) >= 1:
+                last_candle = result['candles'][-1]
+                real_price = float(q.get('price'))
+                last_candle['close'] = round(real_price, 2)
+                last_candle['high'] = round(max(last_candle['high'], real_price), 2)
+                last_candle['low'] = round(min(last_candle['low'], real_price), 2)
+        except:
+            pass
         return result
 
     # Step 4: 生成模擬 K 線（最後防線），基於當前真實價格

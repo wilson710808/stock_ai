@@ -180,12 +180,22 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 <main class="main page" id="portfolioPage">
  <div class="pf-summary" id="pfSummary"></div>
  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
- 
   <button class="type-btn" onclick="showBuyDialog()" style="flex:1"><span class="type-icon">📈</span>買入股票</button>
   <button class="type-btn" onclick="toggleTxPanel()" style="flex:1"><span class="type-icon">📋</span>交易記錄</button>
   <button class="type-btn" onclick="analyzePortfolioAll()" style="flex:1"><span class="type-icon">🤖</span>AI組合分析</button>
  </div>
  <div id="portfolioList"></div>
+</main>
+
+<!-- Favorites Page -->
+<main class="main page" id="favoritesPage">
+ <div class="section-header" style="margin-bottom:12px">
+  <h2 class="section-title">📚 收藏分析</h2>
+  <select id="favTickerFilter" onchange="renderFavorites()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+   <option value="all">全部股票</option>
+  </select>
+ </div>
+ <div id="favoritesList"></div>
 </main>
 
 <!-- Transaction Panel -->
@@ -199,6 +209,7 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
  <button class="nav-item" data-page="chat"><span class="icon">💬</span>提問</button>
  <button class="nav-item" data-page="watchlist"><span class="icon">⭐</span>自選</button>
  <button class="nav-item" data-page="portfolio"><span class="icon">💼</span>持倉</button>
+ <button class="nav-item" data-page="favorites"><span class="icon">📚</span>收藏</button>
 </div>
 
 <!-- Toast -->
@@ -206,5 +217,176 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 
 <script src="app.js?v=202605272350"></script>
 <script src="fix-recommend.js"></script>
+<script>
+// ===== 收藏功能 =====
+let lastAnalysisId = null;
+let lastAnalysisTicker = null;
+let lastAnalysisType = null;
+let lastAnalysisContent = null;
+
+// 保存分析ID供收藏使用
+const originalRenderResult = renderResult;
+renderResult = function(t, type, content, q) {
+  originalRenderResult(t, type, content, q);
+  lastAnalysisTicker = t;
+  lastAnalysisType = type;
+  lastAnalysisContent = content;
+  
+  // 為分析結果添加收藏按鈕
+  setTimeout(() => {
+    const actionRow = document.querySelector('.action-row');
+    if (actionRow && !document.querySelector('.fav-btn')) {
+      const favBtn = document.createElement('button');
+      favBtn.className = 'action-btn';
+      favBtn.textContent = '📚 收藏';
+      favBtn.style.background = '#8b5cf6';
+      favBtn.style.color = '#fff';
+      favBtn.onclick = showAddFavoriteDialog;
+      actionRow.insertBefore(favBtn, actionRow.firstChild);
+    }
+  }, 100);
+};
+
+function showAddFavoriteDialog() {
+  if (!lastAnalysisTicker) {
+    showToast('請先分析股票');
+    return;
+  }
+  showModal('<div class="modal-title">📚 收藏分析</div>' +
+    '<div class="modal-label">股票</div>' +
+    '<input class="modal-input" value="' + lastAnalysisTicker + '" disabled>' +
+    '<div class="modal-label">備註（選填）</div>' +
+    '<input class="modal-input" id="favNote" placeholder="添加備註...">' +
+    '<div class="modal-btn-row">' +
+    '<button class="modal-btn cancel" onclick="closeModal()">取消</button>' +
+    '<button class="modal-btn primary" onclick="addFavorite()">收藏</button>' +
+    '</div>');
+}
+
+async function addFavorite() {
+  if (!lastAnalysisTicker) return;
+  try {
+    // 先保存到歷史記錄（如果還沒）並獲取ID
+    if (currentUser && !lastAnalysisId) {
+      const r = await fetch('api/analysis-history', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ticker:lastAnalysisTicker, type:lastAnalysisType, content:lastAnalysisContent})
+      });
+      const d = await r.json();
+      if (d.id) lastAnalysisId = d.id;
+    }
+    
+    const note = $('favNote').value.trim();
+    await fetch('api/favorites/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({analysis_id:lastAnalysisId||0,ticker:lastAnalysisTicker,type:lastAnalysisType,note})
+    });
+    closeModal();
+    showToast('✅ 收藏成功');
+  } catch(e) {
+    showToast('收藏失敗');
+  }
+}
+
+async function renderFavorites() {
+  const container = $('favoritesList');
+  if (!container) return;
+  
+  if (!currentUser) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">請先登錄</div></div>';
+    return;
+  }
+  
+  container.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
+  
+  try {
+    const tickerFilter = $('favTickerFilter')?.value || 'all';
+    let r;
+    if (tickerFilter === 'all') {
+      r = await fetch('api/favorites');
+    } else {
+      r = await fetch('api/favorites/ticker/' + encodeURIComponent(tickerFilter));
+    }
+    const d = await r.json();
+    
+    if (!d.success) throw new Error(d.error);
+    
+    // 更新篩選下拉選項
+    const tickerSet = new Set();
+    d.favorites.forEach(f => tickerSet.add(f.ticker));
+    const sel = $('favTickerFilter');
+    if (sel) {
+      const cv = sel.value;
+      sel.innerHTML = '<option value="all">全部股票</option>' + Array.from(tickerSet).map(t=>'<option value="'+t+'">'+t+'</option>').join('');
+      sel.value = cv || 'all';
+    }
+    
+    if (!d.favorites.length) {
+      container.innerHTML = '<div class="empty"><div class="empty-icon">📚</div><div class="empty-text">還沒有收藏的分析</div></div>';
+      return;
+    }
+    
+    container.innerHTML = d.favorites.map(f => {
+      const rec = f.recommendation ? ('<span style="font-size:12px;background:rgba(0,200,83,.1);color:#00c853;padding:3px 8px;border-radius:6px;font-size:12px">' + f.recommendation + '</span>') : '');
+      return '<div class="wl-card">' +
+        '<div class="wl-header"><div><div class="wl-ticker">' + f.ticker + '</div><div class="wl-name">' + (f.type || '分析') + ' • ' + new Date(f.created_at).toLocaleDateString('zh-TW') + '</div></div></div>' +
+        (f.note ? '<div class="wl-note"><div class="wl-note-text">📝 ' + f.note + '</div></div>' : '') +
+        '<div class="wl-actions">' +
+        '<button class="wl-btn analyze" onclick="loadFavAnalysis(' + f.id + '\',\'' + f.ticker + '\',\'' + f.type + '\')">📄 查看</button>' +
+        '<button class="wl-btn remove" onclick="removeFavorite(' + f.id + ')">✕ 移除</button>' +
+        '</div></div>';
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗</div></div>';
+  }
+}
+
+async function removeFavorite(id) {
+  if (!confirm('確定要刪除此收藏？')) return;
+  try {
+    await fetch('api/favorites/' + id, { method: 'DELETE' });
+    showToast('✅ 已移除');
+    renderFavorites();
+  } catch(e) {
+    showToast('移除失敗');
+  }
+}
+
+async function loadFavAnalysis(id, t, type) {
+  try {
+    // 先嘗試載入收藏內容
+    const r = await fetch('api/favorites');
+    const d = await r.json();
+    const fav = d.favorites.find(f => f.id == id);
+    if (fav && fav.content) {
+      // 直接顯示
+      tickerInput.value = t;
+      loading.classList.add('show');
+      resultView.classList.remove('show');
+      setTimeout(() => {
+        renderResult(t, type || 'overview', fav.content, null);
+        loading.classList.remove('show');
+      }, 300);
+    } else {
+      // 重新分析
+      tickerInput.value = t;
+      if (type) currentType = type;
+      showPage('home');
+      analyze();
+    }
+  } catch(e) {
+    showToast('載入失敗');
+  }
+}
+
+// 修改 showPage 來處理收藏頁面
+const originalShowPage = showPage;
+showPage = function(p) {
+  originalShowPage(p);
+  if (p === 'favorites') renderFavorites();
+};
+</script>
 </body>
 </html>
