@@ -96,7 +96,7 @@
 <body>
     <div class="app-header">
         <div class="app-title">Stock AI</div>
-        <button class="logout-btn" onclick="window.location.href='/'">返回主頁</button>
+        <button class="logout-btn" onclick="window.location.href='./'">返回主頁</button>
     </div>
     
     <div class="container">
@@ -131,17 +131,17 @@
         // 當前用戶狀態
         async function checkUserStatus() {
             try {
-                const response = await fetch('/api/auth/me');
+                const response = await fetch('api/auth/me');
                 const data = await response.json();
 
                 if (!data.loggedIn) {
-                    window.location.href = '/login.html';
+                    window.location.href = 'login.html';
                 } else {
                     document.getElementById('currentUser').textContent = data.username;
-                    document.getElementById('logoutLink').href = '/api/auth/logout';
+                    document.getElementById('logoutLink').href = 'api/auth/logout';
                 }
             } catch(ex) {
-                window.location.href = '/login.html';
+                window.location.href = 'login.html';
             }
         }
         
@@ -150,7 +150,7 @@
             const newUsername = document.getElementById('newUsername').value.trim();
             
             try {
-                const response = await fetch('/api/auth/profile', {
+                const response = await fetch('api/auth/profile', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ newUsername })
@@ -181,7 +181,7 @@
             }
             
             try {
-                const response = await fetch('/api/auth/password', {
+                const response = await fetch('api/auth/password', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ oldPassword, newPassword })

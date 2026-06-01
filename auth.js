@@ -92,7 +92,9 @@ function authMiddleware(req, res, next) {
     if (!token) {
         // 頁面請求：重定向到登入頁；API 請求：返回 401
         if (path.endsWith('.html') || path === '/' || !path.startsWith('/api/')) {
-            return res.redirect('/login.html');
+            // 反代環境下使用相對路徑重定向
+            const prefix = req.headers['x-forwarded-prefix'] || '';
+            return res.redirect(prefix + '/login.html');
         }
         return res.status(401).json({ error: '請先登入' });
     }
@@ -100,7 +102,8 @@ function authMiddleware(req, res, next) {
     const decoded = verifyJWT(token);
     if (!decoded) {
         if (path.endsWith('.html') || path === '/' || !path.startsWith('/api/')) {
-            return res.redirect('/login.html');
+            const prefix = req.headers['x-forwarded-prefix'] || '';
+            return res.redirect(prefix + '/login.html');
         }
         return res.status(401).json({ error: '無效或已過期的憑證，請重新登入' });
     }

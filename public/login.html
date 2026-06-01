@@ -140,8 +140,9 @@
                 if (!data.success) {
                     document.getElementById('errorMessage').textContent = data.error || '登入失敗';
                 } else {
-                    // 登入成功，跳轉到主頁
-                    window.location.href = '/';
+                    // 登入成功，跳轉到 stock-ai 首頁（保留反代前綴，不跳出 /ws/07-stock-ai/）
+                    const base = window.location.pathname.replace(/\/login\.html.*$/, '/');
+                    window.location.href = base;
                 }
             } catch (err) {
                 document.getElementById('errorMessage').textContent = '登入過程發生錯誤';
