@@ -33,7 +33,7 @@ function getSector(ticker) {
 const DEFAULT_SECTORS = ['科技','消費','金融','通訊','醫療','能源','工業','材料','地產','公用'];
 
 const app = express();
-const PORT = process.env.PORT || 3007;
+const PORT = process.env.PORT || 3001;
 
 // AI Gateway 整合 — 所有 AI 請求透過 Gateway 轉發
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:3005';
