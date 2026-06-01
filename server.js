@@ -1953,22 +1953,26 @@ app.get('/api/user-context', async (req, res) => {
   }
 });
 
-// SPA fallback
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// SPA fallback (移至此處：避免描戰後續定義的 API 路由)
+// app.get('*', ...) 已移至檔案最後面
 
 // ===== 收藏功能 API =====
 
 // 添加收藏
 app.post('/api/favorites/add', (req, res) => {
   if (!req.user) return res.status(401).json({ error: '請先登錄' });
-  const { analysis_id, ticker, type, note } = req.body;
-  if (!analysis_id || !ticker || !type) {
+  const { analysis_id, ticker, type, note, content } = req.body;
+  if (!ticker || !type) {
     return res.status(400).json({ error: '缺少必要參數' });
   }
   try {
-    const result = stmts.addFavorite.run(req.user.userId, analysis_id, ticker, type, note || '');
+    // 如果有 content 但沒有 analysis_id，先存入 analysis_history
+    let aid = analysis_id || null;
+    if (!aid && content) {
+      const r = stmts.insertAnalysis.run(req.user.userId, ticker, type, content, '');
+      aid = r.lastInsertRowid;
+    }
+    const result = stmts.addFavorite.run(req.user.userId, aid || 0, ticker, type, note || '');
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: '收藏失敗: ' + e.message });
@@ -2005,6 +2009,45 @@ app.get('/api/favorites/ticker/:ticker', (req, res) => {
   try {
     const favorites = stmts.getFavoritesByTicker.all(req.user.userId, ticker.toUpperCase());
     res.json({ success: true, favorites });
+  } catch (e) {
+    res.status(500).json({ error: '獲取收藏失敗: ' + e.message });
+  }
+});
+
+// 按板塊+股票分組獲取收藏（用於收藏頁面樹狀結構）
+app.get('/api/favorites/grouped', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  try {
+    const favorites = stmts.getFavorites.all(req.user.userId);
+    // 按板塊 → 股票 → 日期降序分組
+    const grouped = {};
+    favorites.forEach(f => {
+      const sector = getSector(f.ticker);
+      if (!grouped[sector]) grouped[sector] = {};
+      if (!grouped[sector][f.ticker]) grouped[sector][f.ticker] = [];
+      grouped[sector][f.ticker].push(f);
+    });
+    // 每個股票內按 created_at 降序（SQL 已排序，這裡再保險一次）
+    Object.keys(grouped).forEach(sec => {
+      Object.keys(grouped[sec]).forEach(t => {
+        grouped[sec][t].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      });
+    });
+    // 板塊內股票按最新一筆收藏時間降序
+    const result = Object.keys(grouped).map(sector => {
+      const tickers = Object.keys(grouped[sector]).map(t => ({
+        ticker: t,
+        latestAt: grouped[sector][t][0].created_at,
+        records: grouped[sector][t]
+      })).sort((a, b) => new Date(b.latestAt) - new Date(a.latestAt));
+      return {
+        sector,
+        latestAt: tickers[0].latestAt,
+        totalCount: tickers.reduce((s, x) => s + x.records.length, 0),
+        tickers
+      };
+    }).sort((a, b) => new Date(b.latestAt) - new Date(a.latestAt));
+    res.json({ success: true, groups: result, total: favorites.length });
   } catch (e) {
     res.status(500).json({ error: '獲取收藏失敗: ' + e.message });
   }
@@ -2063,6 +2106,11 @@ ${conclusion || '无'}
 // （analysis-history GET 已在前面通過數據庫定義，此處不再重複）
 
 // 啟動服務
+// SPA fallback — 必須在所有 API 路由之後註冊，否則會攛先匹配所有 GET 請求
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`📈 美股 AI 投顧助手已啟動（監聽: 0.0.0.0:${PORT}）`);
   console.log(`🔗 Gateway: ${GATEWAY_URL}`);

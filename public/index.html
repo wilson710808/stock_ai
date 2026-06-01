@@ -191,8 +191,9 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 <main class="main page" id="favoritesPage">
  <div class="section-header" style="margin-bottom:12px">
   <h2 class="section-title">📚 收藏分析</h2>
-  <select id="favTickerFilter" onchange="renderFavorites()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-   <option value="all">全部股票</option>
+  <select id="favViewMode" onchange="renderFavorites()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+   <option value="sector">按板塊分類</option>
+   <option value="recent">最近收藏</option>
   </select>
  </div>
  <div id="favoritesList"></div>
@@ -217,6 +218,36 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 
 <script src="app.js?v=202605272350"></script>
 <script src="fix-recommend.js"></script>
+<style>
+.fav-summary{padding:10px 14px;background:#f3f4f6;border-radius:8px;font-size:12px;color:var(--text-secondary);margin-bottom:12px}
+.fav-sector-group{margin-bottom:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}
+.fav-sector-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;cursor:pointer;background:linear-gradient(135deg,#f8fafc,#eff6ff);transition:background .2s}
+.fav-sector-header:hover{background:linear-gradient(135deg,#e0e7ff,#ddd6fe)}
+.fav-sector-left{display:flex;align-items:center;gap:8px;font-weight:600}
+.fav-sector-icon{font-size:18px}
+.fav-sector-name{font-size:15px;color:var(--text)}
+.fav-sector-count{font-size:11px;color:var(--text-secondary);background:#fff;padding:2px 8px;border-radius:10px}
+.fav-sector-arrow{font-size:12px;color:var(--text-secondary);transition:transform .2s}
+.fav-sector-body{padding:8px 12px 12px;background:#fff}
+.fav-ticker-group{margin:6px 0;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa}
+.fav-ticker-header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;transition:background .15s}
+.fav-ticker-header:hover{background:#f3f4f6}
+.fav-ticker-left{display:flex;align-items:center;gap:8px}
+.fav-ticker-badge{font-weight:700;color:var(--accent);font-size:14px;padding:2px 8px;background:rgba(99,102,241,.1);border-radius:6px}
+.fav-ticker-count{font-size:11px;color:var(--text-secondary)}
+.fav-ticker-arrow{font-size:11px;color:var(--text-secondary)}
+.fav-ticker-body{padding:0 8px 8px}
+.fav-record{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:6px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;cursor:pointer;transition:all .15s}
+.fav-record:hover{background:#eff6ff;border-color:var(--accent);transform:translateX(2px)}
+.fav-record-left{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.fav-record-type{font-weight:600;font-size:13px;color:var(--text)}
+.fav-record-note{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fav-record-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.fav-record-date{font-size:11px;color:var(--text-secondary)}
+.fav-rec-badge{display:inline-block;font-size:10px;background:rgba(0,200,83,.1);color:#00c853;padding:2px 6px;border-radius:4px;margin-left:4px}
+.fav-remove-btn{background:none;border:none;color:#ef4444;font-size:14px;cursor:pointer;padding:4px 8px;border-radius:4px;transition:background .15s}
+.fav-remove-btn:hover{background:rgba(239,68,68,.1)}
+</style>
 <script>
 // ===== 收藏功能 =====
 let lastAnalysisId = null;
@@ -224,27 +255,13 @@ let lastAnalysisTicker = null;
 let lastAnalysisType = null;
 let lastAnalysisContent = null;
 
-// 保存分析ID供收藏使用
+// 保存分析信息供收藏使用
 const originalRenderResult = renderResult;
 renderResult = function(t, type, content, q) {
   originalRenderResult(t, type, content, q);
   lastAnalysisTicker = t;
   lastAnalysisType = type;
   lastAnalysisContent = content;
-  
-  // 為分析結果添加收藏按鈕
-  setTimeout(() => {
-    const actionRow = document.querySelector('.action-row');
-    if (actionRow && !document.querySelector('.fav-btn')) {
-      const favBtn = document.createElement('button');
-      favBtn.className = 'action-btn';
-      favBtn.textContent = '📚 收藏';
-      favBtn.style.background = '#8b5cf6';
-      favBtn.style.color = '#fff';
-      favBtn.onclick = showAddFavoriteDialog;
-      actionRow.insertBefore(favBtn, actionRow.firstChild);
-    }
-  }, 100);
 };
 
 function showAddFavoriteDialog() {
@@ -266,80 +283,151 @@ function showAddFavoriteDialog() {
 async function addFavorite() {
   if (!lastAnalysisTicker) return;
   try {
-    // 先保存到歷史記錄（如果還沒）並獲取ID
-    if (currentUser && !lastAnalysisId) {
-      const r = await fetch('api/analysis-history', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ticker:lastAnalysisTicker, type:lastAnalysisType, content:lastAnalysisContent})
-      });
-      const d = await r.json();
-      if (d.id) lastAnalysisId = d.id;
-    }
-    
     const note = $('favNote').value.trim();
-    await fetch('api/favorites/add', {
+    const resp = await fetch('api/favorites/add', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({analysis_id:lastAnalysisId||0,ticker:lastAnalysisTicker,type:lastAnalysisType,note})
+      body: JSON.stringify({
+        analysis_id: lastAnalysisId || null,
+        ticker: lastAnalysisTicker,
+        type: lastAnalysisType,
+        content: lastAnalysisContent,
+        note
+      })
     });
+    const d = await resp.json();
+    if (!d.success) throw new Error(d.error || '收藏失敗');
     closeModal();
     showToast('✅ 收藏成功');
+    lastAnalysisId = null;
   } catch(e) {
-    showToast('收藏失敗');
+    showToast('收藏失敗：' + (e.message || ''));
   }
 }
+
+// 板塊圖標映射
+const SECTOR_ICONS = {
+  '科技':'💻','通訊':'📡','消費':'🛒','金融':'🏦','醫療':'🏥',
+  '能源':'⛽','工業':'🏭','材料':'🧪','地產':'🏠','公用':'⚡','其他':'📌'
+};
 
 async function renderFavorites() {
   const container = $('favoritesList');
   if (!container) return;
-  
+
   if (!currentUser) {
     container.innerHTML = '<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">請先登錄</div></div>';
     return;
   }
-  
+
   container.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
-  
+
   try {
-    const tickerFilter = $('favTickerFilter')?.value || 'all';
-    let r;
-    if (tickerFilter === 'all') {
-      r = await fetch('api/favorites');
+    const viewMode = $('favViewMode')?.value || 'sector';
+
+    if (viewMode === 'sector') {
+      // 板塊分組模式
+      const r = await fetch('api/favorites/grouped');
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error);
+
+      if (!d.groups || !d.groups.length) {
+        container.innerHTML = '<div class="empty"><div class="empty-icon">📚</div><div class="empty-text">還沒有收藏的分析</div></div>';
+        return;
+      }
+
+      container.innerHTML = '<div class="fav-summary">共 ' + d.total + ' 筆收藏，分佈於 ' + d.groups.length + ' 個板塊</div>' +
+        d.groups.map(g => {
+          const icon = SECTOR_ICONS[g.sector] || '📌';
+          return '<div class="fav-sector-group">' +
+            '<div class="fav-sector-header" onclick="toggleFavSector(this)">' +
+              '<div class="fav-sector-left"><span class="fav-sector-icon">' + icon + '</span><span class="fav-sector-name">' + g.sector + '</span><span class="fav-sector-count">' + g.totalCount + ' 筆</span></div>' +
+              '<span class="fav-sector-arrow">▸</span>' +
+            '</div>' +
+            '<div class="fav-sector-body" style="display:none">' +
+              g.tickers.map(t => {
+                return '<div class="fav-ticker-group">' +
+                  '<div class="fav-ticker-header" onclick="toggleFavTicker(this)">' +
+                    '<div class="fav-ticker-left"><span class="fav-ticker-badge">' + t.ticker + '</span><span class="fav-ticker-count">' + t.records.length + ' 筆分析</span></div>' +
+                    '<span class="fav-ticker-arrow">▸</span>' +
+                  '</div>' +
+                  '<div class="fav-ticker-body" style="display:none">' +
+                    t.records.map(f => {
+                      const dateStr = f.created_at ? new Date(f.created_at).toLocaleDateString('zh-TW', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+                      const typeLabel = {overview:'全面分析',technical:'技術面',fundamental:'基本面',compare:'比較',risk:'風險',signal:'信號'}[f.type] || f.type;
+                      const recBadge = f.recommendation ? '<span class="fav-rec-badge">' + f.recommendation + '</span>' : '';
+                      return '<div class="fav-record" onclick="loadFavAnalysis(' + f.id + ',\'' + f.ticker + '\',\'' + f.type + '\')">' +
+                        '<div class="fav-record-left">' +
+                          '<span class="fav-record-type">' + typeLabel + '</span>' +
+                          recBadge +
+                          (f.note ? '<span class="fav-record-note">📝 ' + f.note + '</span>' : '') +
+                        '</div>' +
+                        '<div class="fav-record-right">' +
+                          '<span class="fav-record-date">' + dateStr + '</span>' +
+                          '<button class="fav-remove-btn" onclick="event.stopPropagation();removeFavorite(' + f.id + ')">✕</button>' +
+                        '</div>' +
+                      '</div>';
+                    }).join('') +
+                  '</div>' +
+                '</div>';
+              }).join('') +
+            '</div>' +
+          '</div>';
+        }).join('');
+
     } else {
-      r = await fetch('api/favorites/ticker/' + encodeURIComponent(tickerFilter));
+      // 最近收藏模式（平鋪按日期降序）
+      const r = await fetch('api/favorites');
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error);
+
+      if (!d.favorites.length) {
+        container.innerHTML = '<div class="empty"><div class="empty-icon">📚</div><div class="empty-text">還沒有收藏的分析</div></div>';
+        return;
+      }
+
+      container.innerHTML = '<div class="fav-summary">共 ' + d.favorites.length + ' 筆收藏</div>' +
+        d.favorites.map(f => {
+          const dateStr = f.created_at ? new Date(f.created_at).toLocaleDateString('zh-TW', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+          const typeLabel = {overview:'全面分析',technical:'技術面',fundamental:'基本面',compare:'比較',risk:'風險',signal:'信號'}[f.type] || f.type;
+          const recBadge = f.recommendation ? '<span class="fav-rec-badge">' + f.recommendation + '</span>' : '';
+          return '<div class="wl-card" onclick="loadFavAnalysis(' + f.id + ',\'' + f.ticker + '\',\'' + f.type + '\')">' +
+            '<div class="wl-header"><div><div class="wl-ticker">' + f.ticker + '</div><div class="wl-name">' + typeLabel + ' • ' + dateStr + '</div></div>' + recBadge + '</div>' +
+            (f.note ? '<div class="wl-note"><div class="wl-note-text">📝 ' + f.note + '</div></div>' : '') +
+            '<div class="wl-actions">' +
+            '<button class="wl-btn analyze" onclick="event.stopPropagation();loadFavAnalysis(' + f.id + ',\'' + f.ticker + '\',\'' + f.type + '\')">📄 查看</button>' +
+            '<button class="wl-btn remove" onclick="event.stopPropagation();removeFavorite(' + f.id + ')">✕ 移除</button>' +
+            '</div></div>';
+        }).join('');
     }
-    const d = await r.json();
-    
-    if (!d.success) throw new Error(d.error);
-    
-    // 更新篩選下拉選項
-    const tickerSet = new Set();
-    d.favorites.forEach(f => tickerSet.add(f.ticker));
-    const sel = $('favTickerFilter');
-    if (sel) {
-      const cv = sel.value;
-      sel.innerHTML = '<option value="all">全部股票</option>' + Array.from(tickerSet).map(t=>'<option value="'+t+'">'+t+'</option>').join('');
-      sel.value = cv || 'all';
-    }
-    
-    if (!d.favorites.length) {
-      container.innerHTML = '<div class="empty"><div class="empty-icon">📚</div><div class="empty-text">還沒有收藏的分析</div></div>';
-      return;
-    }
-    
-    container.innerHTML = d.favorites.map(f => {
-      const rec = f.recommendation ? ('<span style="font-size:12px;background:rgba(0,200,83,.1);color:#00c853;padding:3px 8px;border-radius:6px;font-size:12px">' + f.recommendation + '</span>') : '');
-      return '<div class="wl-card">' +
-        '<div class="wl-header"><div><div class="wl-ticker">' + f.ticker + '</div><div class="wl-name">' + (f.type || '分析') + ' • ' + new Date(f.created_at).toLocaleDateString('zh-TW') + '</div></div></div>' +
-        (f.note ? '<div class="wl-note"><div class="wl-note-text">📝 ' + f.note + '</div></div>' : '') +
-        '<div class="wl-actions">' +
-        '<button class="wl-btn analyze" onclick="loadFavAnalysis(' + f.id + '\',\'' + f.ticker + '\',\'' + f.type + '\')">📄 查看</button>' +
-        '<button class="wl-btn remove" onclick="removeFavorite(' + f.id + ')">✕ 移除</button>' +
-        '</div></div>';
-    }).join('');
   } catch(e) {
     container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗</div></div>';
+  }
+}
+
+// 板塊展開/收起
+function toggleFavSector(el) {
+  const body = el.nextElementSibling;
+  const arrow = el.querySelector('.fav-sector-arrow');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.textContent = '▾';
+  } else {
+    body.style.display = 'none';
+    arrow.textContent = '▸';
+  }
+}
+
+// 個股展開/收起
+function toggleFavTicker(el) {
+  const body = el.nextElementSibling;
+  const arrow = el.querySelector('.fav-ticker-arrow');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.textContent = '▾';
+  } else {
+    body.style.display = 'none';
+    arrow.textContent = '▸';
   }
 }
 
@@ -356,12 +444,10 @@ async function removeFavorite(id) {
 
 async function loadFavAnalysis(id, t, type) {
   try {
-    // 先嘗試載入收藏內容
     const r = await fetch('api/favorites');
     const d = await r.json();
     const fav = d.favorites.find(f => f.id == id);
     if (fav && fav.content) {
-      // 直接顯示
       tickerInput.value = t;
       loading.classList.add('show');
       resultView.classList.remove('show');
@@ -370,7 +456,6 @@ async function loadFavAnalysis(id, t, type) {
         loading.classList.remove('show');
       }, 300);
     } else {
-      // 重新分析
       tickerInput.value = t;
       if (type) currentType = type;
       showPage('home');
