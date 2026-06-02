@@ -915,7 +915,7 @@ async function buildUserInvestContext(userId) {
         if (cachedQ && (Date.now() - cachedQ.timestamp) < CONTEXT_QUOTES_CACHE_TTL) {
           quotes = cachedQ.data;
         } else {
-          const resp = await fetch('http://127.0.0.1:3007/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) });
+          const resp = await timedFetch('http://127.0.0.1:3001/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) }, 10000);
           const qd = await resp.json();
           if (qd.success && qd.quotes) {
             const qArr = Array.isArray(qd.quotes) ? qd.quotes : Object.values(qd.quotes);
@@ -1233,6 +1233,16 @@ app.get('/api/config', (req, res) => {
 });
 
 // 嘗試獲取實時股價（Python 爬蟲 - 使用更好的 realtime_price.py）
+function timedFetch(url, options = {}, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs);
+    fetch(url, { ...options, signal: controller.signal })
+      .then(r => { clearTimeout(timer); resolve(r); })
+      .catch(() => { clearTimeout(timer); resolve(null); });
+  });
+}
+
 function getStockPricePython(ticker) {
   return new Promise((resolve) => {
     // 使用 realtime_price.py（Yahoo Finance 優先）
@@ -1395,7 +1405,7 @@ app.post('/api/analyze', async (req, res) => {
   let priceData = null;
   if (ticker) {
     try {
-      const priceResp = await fetch('http://127.0.0.1:3007/api/quote', {
+      const priceResp = await timedFetch(`http://127.0.0.1:${PORT}/api/quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker })
@@ -1414,7 +1424,7 @@ app.post('/api/analyze', async (req, res) => {
   let klineData = null;
   if (ticker) {
     try {
-      const klResp = await fetch('http://127.0.0.1:3007/api/chart/' + ticker);
+      const klResp = await timedFetch(`http://127.0.0.1:${PORT}/api/chart/` + ticker, {}, 15000);
       const klData = await klResp.json();
       if (klData.success && klData.candles && klData.candles.length > 0) {
         klineData = klData.candles;
