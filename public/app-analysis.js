@@ -253,26 +253,16 @@
                 '</div>';
         }
         
-        // 提取建議
-        var recMatch = content.match(/\*\*最終建議：?\*\*\s*(買入|賣出|持有|觀望)/i);
-        var rec = recMatch ? recMatch[1] : null;
-        var recClass = '';
-        var recColor = '';
-        
-        if (rec) {
-            if (rec === '買入') { recClass = 'rec-buy'; recColor = '#4ADE80'; }
-            else if (rec === '賣出') { recClass = 'rec-sell'; recColor = '#F87171'; }
-            else if (rec === '持有') { recClass = 'rec-hold'; recColor = '#FBBF24'; }
-            else { recClass = 'rec-watch'; recColor = '#F87171'; }
-        }
-        
+        // 提取決策建議（兼容 v2.0.0 的 [RECOMMENDATION:*] 標記與中文結論）
+        var recInfo = window.extractRecommendation ? window.extractRecommendation(content) : null;
         var recHtml = '';
-        if (rec) {
+        if (recInfo) {
             recHtml = '<div class="recommendation">' +
-                '<div class="rec-icon">📊</div>' +
+                '<div class="rec-icon">' + recInfo.icon + '</div>' +
                 '<div>' +
-                '<div class="rec-label">AI 建議</div>' +
-                '<div class="rec-value ' + recClass + '" style="color:' + recColor + '">' + rec + '</div>' +
+                '<div class="rec-label">投資決策建議</div>' +
+                '<div class="rec-value ' + recInfo.cls + '" style="color:' + recInfo.color + '">' + recInfo.label + '</div>' +
+                (recInfo.reason ? '<div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:4px">' + recInfo.reason + '</div>' : '') +
                 '</div>' +
                 '</div>';
         }
@@ -307,7 +297,8 @@
             buyBtnHtml +
             '<div id="chartContainer" class="chart-container" style="display:none">' +
             '<div class="chart-header">' +
-            '<span class="chart-title">📈 近期走勢</span>' +
+            '<span class="chart-title">📈 K線走勢圖</span>' +
+            '<span class="chart-badge" id="chartBadge">加載中...</span>' +
             '</div>' +
             '<div id="chart"></div>' +
             '</div>';
@@ -318,76 +309,155 @@
         window.loadChart(t);
     };
     
-    // ===== 載入股票圖表 =====
-    
+    // ===== 決策建議解析 =====
+
     /**
-     * 載入股票 K 線圖
+     * 從 AI 內容提取決策建議。
+     * 兼容 v2.0.0 的 [RECOMMENDATION:*] 標記，以及中文「最終建議 / 當前建議」。
+     * @param {string} content
+     * @returns {Object|null}
+     */
+    window.extractRecommendation = function(content) {
+        var text = String(content || '');
+        var marker = text.match(/\[RECOMMENDATION:(BUY|HOLD|SELL|AVOID)\]/i);
+        var code = marker ? marker[1].toUpperCase() : '';
+        var reason = '';
+
+        if (!code) {
+            var conclusion = text.match(/(?:\*\*)?(?:最終建議|當前建議|綜合評級|建議)[:：]?(?:\*\*)?\s*([^\n]+)/i);
+            var line = conclusion ? conclusion[1] : text;
+            if (/避開|不符合|避免|不建議買入|AVOID/i.test(line)) code = 'AVOID';
+            else if (/賣出|減倉|清倉|SELL/i.test(line)) code = 'SELL';
+            else if (/買入|加倉|強烈買入|BUY/i.test(line)) code = 'BUY';
+            else if (/持有|觀望|等待|HOLD/i.test(line)) code = 'HOLD';
+            if (conclusion) reason = line.replace(/\[RECOMMENDATION:(BUY|HOLD|SELL|AVOID)\]/ig, '').trim();
+        }
+
+        var map = {
+            BUY:   { icon: '🚀', label: '建議買入', cls: 'rec-buy', color: '#4ADE80' },
+            HOLD:  { icon: '⏸️', label: '觀望持有', cls: 'rec-hold', color: '#FBBF24' },
+            SELL:  { icon: '⚠️', label: '建議賣出', cls: 'rec-sell', color: '#F87171' },
+            AVOID: { icon: '🛑', label: '建議避開', cls: 'rec-watch', color: '#F87171' }
+        };
+        if (!map[code]) return null;
+        return Object.assign({ code: code, reason: reason }, map[code]);
+    };
+
+    // ===== 載入股票圖表 =====
+
+    /**
+     * 載入股票 K 線圖。套用 v2.0.0 的 candles 資料格式，並兼容舊 data 格式。
      * @param {string} ticker - 股票代碼
      */
-    window.loadChart = function(ticker) {
+    window.loadChart = async function(ticker) {
         var container = document.getElementById('chartContainer');
         var chartDiv = document.getElementById('chart');
+        var badge = document.getElementById('chartBadge');
         if (!container || !chartDiv) return;
-        
+
         container.style.display = 'block';
-        
-        fetch('api/chart/' + ticker)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d.success || !d.data || !d.data.length) {
-                    chartDiv.innerHTML = '<div class="chart-error">暫無圖表數據</div>';
-                    return;
+        chartDiv.innerHTML = '';
+        if (badge) {
+            badge.textContent = '加載中...';
+            badge.style.color = 'var(--text-secondary)';
+        }
+
+        // v2.0.0 是直接等待 lightweight-charts 載入；當前版本 script 是 async，也需要等待。
+        for (var i = 0; i < 20 && typeof LightweightCharts === 'undefined'; i++) {
+            await new Promise(function(resolve) { setTimeout(resolve, 150); });
+        }
+        if (typeof LightweightCharts === 'undefined') {
+            chartDiv.innerHTML = '<div class="chart-error">⚠️ K線圖庫載入失敗</div>';
+            if (badge) badge.textContent = '❌ 圖表庫錯誤';
+            return;
+        }
+
+        try {
+            var r = await fetch('api/chart/' + encodeURIComponent(ticker));
+            var d = await r.json();
+            var raw = [];
+            if (d && Array.isArray(d.candles)) raw = d.candles;
+            else if (d && Array.isArray(d.data)) raw = d.data;
+
+            var candles = raw.map(function(item) {
+                var time = item.time || item.date;
+                if (typeof time === 'number') {
+                    // lightweight-charts 可接受 UTC 秒；若 API 不小心給毫秒則轉秒。
+                    time = time > 20000000000 ? Math.floor(time / 1000) : time;
                 }
-                
-                if (typeof LightweightCharts === 'undefined') {
-                    chartDiv.innerHTML = '<div class="chart-error">圖表庫加載失敗</div>';
-                    return;
-                }
-                
-                if (window.chart) {
-                    window.chart.remove();
-                }
-                
-                window.chart = LightweightCharts.createChart(chartDiv, {
-                    width: chartDiv.clientWidth || 340,
-                    height: 280,
-                    layout: {
-                        backgroundColor: '#ffffff',
-                        textColor: '#333'
-                    },
-                    grid: {
-                        vertLines: { color: '#f0f0f0' },
-                        horzLines: { color: '#f0f0f0' }
+                return {
+                    time: time,
+                    open: Number(item.open),
+                    high: Number(item.high),
+                    low: Number(item.low),
+                    close: Number(item.close)
+                };
+            }).filter(function(item) {
+                return item.time && isFinite(item.open) && isFinite(item.high) && isFinite(item.low) && isFinite(item.close);
+            });
+
+            if (!d.success || !candles.length) {
+                chartDiv.innerHTML = '<div class="chart-error">📊 K線數據暫時無法獲取，請稍後再試</div>';
+                if (badge) badge.textContent = '⚠️ 暫無數據';
+                return;
+            }
+
+            if (window.chart) {
+                try { window.chart.remove(); } catch (e) {}
+                window.chart = null;
+            }
+
+            var width = chartDiv.clientWidth || container.clientWidth || 340;
+            window.chart = LightweightCharts.createChart(chartDiv, {
+                width: width,
+                height: 280,
+                layout: {
+                    background: { color: '#ffffff' },
+                    backgroundColor: '#ffffff',
+                    textColor: '#333'
+                },
+                grid: {
+                    vertLines: { color: '#e5e7eb' },
+                    horzLines: { color: '#e5e7eb' }
+                },
+                crosshair: { mode: LightweightCharts.CrosshairMode ? LightweightCharts.CrosshairMode.Normal : 0 },
+                rightPriceScale: { borderColor: '#e5e7eb' },
+                timeScale: { borderColor: '#e5e7eb', timeVisible: false }
+            });
+
+            var candleSeries = window.chart.addCandlestickSeries({
+                upColor: '#22c55e',
+                downColor: '#ef4444',
+                borderUpColor: '#22c55e',
+                borderDownColor: '#ef4444',
+                wickUpColor: '#22c55e',
+                wickDownColor: '#ef4444'
+            });
+
+            candleSeries.setData(candles);
+            window.chart.timeScale().fitContent();
+
+            if (badge) {
+                badge.textContent = '✅ ' + (d.source || 'K線數據') + ' · ' + candles.length + ' 天';
+                badge.style.color = 'var(--accent)';
+            }
+
+            if (!window.__stockChartResizeBound) {
+                window.__stockChartResizeBound = true;
+                window.addEventListener('resize', function() {
+                    if (window.chart) {
+                        var el = document.getElementById('chart');
+                        if (el) window.chart.resize(el.clientWidth || 340, 280);
                     }
                 });
-                
-                var candleSeries = window.chart.addCandlestickSeries({
-                    upColor: '#22c55e',
-                    downColor: '#ef4444',
-                    borderUpColor: '#22c55e',
-                    borderDownColor: '#ef4444',
-                    wickUpColor: '#22c55e',
-                    wickDownColor: '#ef4444'
-                });
-                
-                candleSeries.setData(d.data.map(function(item) {
-                    return {
-                        time: item.date,
-                        open: item.open,
-                        high: item.high,
-                        low: item.low,
-                        close: item.close
-                    };
-                }));
-                
-                window.chart.timeScale().fitContent();
-                
-            })
-            .catch(function() {
-                chartDiv.innerHTML = '<div class="chart-error">圖表加載失敗</div>';
-            });
+            }
+        } catch (e) {
+            console.error('[Chart] 載入失敗:', e);
+            chartDiv.innerHTML = '<div class="chart-error">圖表加載失敗：' + (e.message || '未知錯誤') + '</div>';
+            if (badge) badge.textContent = '❌ 錯誤';
+        }
     };
-    
+
     // ===== 聊天功能 =====
     
     /**

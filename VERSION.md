@@ -68,3 +68,11 @@
 - 修復全面分析 `type` 可能為空，導致 `analysis_history.type` NOT NULL 錯誤與分析流程不穩
 - 後端 `/api/analyze` 增加 `analysisType` fallback：空 type 預設 `overview`
 - 前端版本與 cache-buster 升至 `20260602009`
+
+
+## v2.2.10 — 2026-06-03
+- 修復 K 線圖：前端 `loadChart()` 套回 v2.0.0 的 `/api/chart/:ticker` `candles` 格式，並兼容舊 `data` 格式
+- 等待 async lightweight-charts 載入後再初始化，避免圖表庫尚未載入造成空白
+- K 線圖 badge 顯示資料源與天數，錯誤訊息改為可理解提示
+- 修復決策建議卡片：兼容 `[RECOMMENDATION:BUY|HOLD|SELL|AVOID]` 與中文「最終建議/當前建議/綜合評級」
+- 前端版本與 cache-buster 升至 `20260603001`
