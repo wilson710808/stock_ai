@@ -1,453 +1,122 @@
-// StockAI app.js — 完整合併版（含認證、持倉增強、自選增強）
+/**
+ * StockAI - 主入口文件 v2.2.0
+ * 
+ * 本文件為模組化重構後的入口點，負責加載各個功能模組。
+ * 完整的代碼已拆分到以下模組：
+ * 
+ * 加載順序（重要）：
+ * 1. app-config.js  - 全局配置和常量
+ * 2. app-utils.js    - 工具函數
+ * 3. app-auth.js     - 用戶認證
+ * 4. app-data.js     - 數據管理
+ * 5. app-analysis.js - 股票分析
+ * 6. app-portfolio.js - 持倉管理
+ * 7. app-watchlist.js - 自選股管理
+ * 8. app-recommend.js - 推薦功能
+ * 9. app-init.js     - 初始化
+ * 
+ * 所有模組都通過 IIFE 封裝，僅將必要函數導出到 window 對象。
+ */
+
 'use strict';
-window.onerror=function(m,s,l){console.error("JS Error:",m,"Line:",l);return false};
-let currentType='overview',currentTicker='',chart=null,currentUser=null;
-let history=JSON.parse(localStorage.getItem('stock_history')||'[]');
-let chatHistoryArr=[];
-// 離線模式
-let offPortfolio=JSON.parse(localStorage.getItem('stock_portfolio')||'[]');
-let offWatchlist=JSON.parse(localStorage.getItem('stock_watchlist')||'[]');
-let offWLGroups=JSON.parse(localStorage.getItem('stock_watchlist_groups')||'["科技股","消費股","金融股","觀察池"]');
-let offTx=JSON.parse(localStorage.getItem('stock_transactions')||'[]');
-let offAlerts=JSON.parse(localStorage.getItem('stock_alerts')||'[]');
-let offCash=0;
-// 服務器快取
-let srvPortfolio=[],srvWatchlist=[],srvWLGroups=[],srvTx=[],srvAlerts=[],srvCash=0,srvDivs=[];
-const SECTOR_MAP={'AAPL':'科技','MSFT':'科技','NVDA':'科技','AMD':'科技','GOOGL':'科技','GOOG':'科技','META':'通訊','NFLX':'通訊','T':'通訊','VZ':'通訊','AMZN':'消費','TSLA':'消費','WMT':'消費','COST':'消費','NKE':'消費','SBUX':'消費','MCD':'消費','JPM':'金融','V':'金融','BRK.B':'金融','GS':'金融','BAC':'金融','UNH':'醫療','JNJ':'醫療','PFE':'醫療','ABBV':'醫療','XOM':'能源','CVX':'能源','CAT':'工業','BA':'工業','HON':'工業','UPS':'工業','LIN':'材料','PLD':'地產','NEE':'公用','DUK':'公用'};
-const SCOLORS={'科技':'#3b82f6','消費':'#f59e0b','金融':'#22c55e','通訊':'#8b5cf6','醫療':'#ec4899','能源':'#f97316','工業':'#06b6d4','材料':'#84cc16','地產':'#a855f7','公用':'#64748b','其他':'#9ca3af','現金':'#9ca3af'};
-const $=id=>document.getElementById(id);
-const tickerInput=$('tickerInput'),searchBtn=$('searchBtn'),loading=$('loading'),resultView=$('resultView'),historyList=$('historyList'),toastEl=$('toast');
-function showToast(m){toastEl.textContent=m;toastEl.classList.add('show');setTimeout(()=>toastEl.classList.remove('show'),2500)}
-function fmtP(n){return n!=null?'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'-'}
-function fmtPct(n){return n!=null?(n>=0?'+':'')+n.toFixed(2)+'%':'-'}
-function fmtD(ts){if(!ts)return'-';return new Date(ts).toLocaleDateString('zh-TW',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}
-function fmtDays(ts){if(!ts)return'-';const d=Math.floor((Date.now()-new Date(ts).getTime())/86400000);return d+'天'}
-function saveLS(k,v){localStorage.setItem(k,JSON.stringify(v))}
-function udC(v){return v>=0?'#22c55e':'#ef4444'}
-function udA(v){return v>=0?'▲':'▼'}
-function getSector(t){return SECTOR_MAP[t.toUpperCase()]||'其他'}
-function closeModal(){const m=document.querySelector('.modal-overlay');if(m)m.remove()}
-function showModal(h){closeModal();const d=document.createElement('div');d.className='modal-overlay';d.innerHTML='<div class="modal-box">'+h+'</div>';d.onclick=e=>{if(e.target===d)closeModal()};d.querySelector('.modal-box').onclick=e=>e.stopPropagation();document.body.appendChild(d)}
-// 頁面切換
-function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));$(p+'Page').classList.add('active');document.querySelector('.nav-item[data-page="'+p+'"]')?.classList.add('active');if(p==='watchlist')renderWatchlist();if(p==='portfolio')renderPortfolio()}
-// 數據訪問器
-function gPF(){return currentUser?srvPortfolio:offPortfolio}
-function gCash(){return currentUser?srvCash:offCash}
-function gWL(){return currentUser?srvWatchlist.map(w=>w.ticker):offWatchlist}
-function gWLI(){return currentUser?srvWatchlist:[]}
-function gWLGroups(){return currentUser?srvWLGroups:offWLGroups}
-function gTx(){return currentUser?srvTx:offTx}
-// 認證
-async function checkAuth(){try{const r=await fetch('api/auth/me');const d=await r.json();if(d.loggedIn){currentUser=d.user;renderUserArea();await loadSrvData();await loadUserInvestCtx()}else{currentUser=null;renderUserArea()}}catch(e){currentUser=null;renderUserArea()}}
-function renderUserArea(){const a=$('userArea'),dd=$('userDropdown');if(currentUser){a.innerHTML='<button class="user-btn" onclick="toggleUserDropdown()">👤 '+(currentUser.displayName||currentUser.username)+'</button>'}else{a.innerHTML='<button onclick="showAuthModal()" style="font-size:13px;padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:inherit">登錄</button>';dd.classList.remove('show')}}
-function toggleUserDropdown(){$('userDropdown').classList.toggle('show')}
-document.addEventListener('click',e=>{if(!e.target.closest('#userArea')&&!e.target.closest('#userDropdown'))$('userDropdown')?.classList.remove('show')});
-function showAuthModal(mode){const m=mode||'login',isL=m==='login';showModal('<div class="auth-tabs"><button class="auth-tab '+(isL?'active':'')+'" onclick="showAuthModal(\'login\')">登錄</button><button class="auth-tab '+(isL?'':'active')+'" onclick="showAuthModal(\'register\')">註冊</button></div>'+(isL?'<div class="modal-label">用戶名 / 郵箱</div><input class="modal-input" id="authUsername" placeholder="輸入用戶名或郵箱"><div class="modal-label">密碼</div><input class="modal-input" type="password" id="authPassword" placeholder="輸入密碼" onkeypress="if(event.key===\'Enter\')doLogin()"><div class="modal-btn-row"><button class="modal-btn primary" onclick="doLogin()">登錄</button></div><div class="auth-switch">還沒有帳號？<a onclick="showAuthModal(\'register\')">立即註冊</a></div>':'<div class="modal-label">用戶名</div><input class="modal-input" id="regUsername" placeholder="至少 3 字元"><div class="modal-label">郵箱（選填）</div><input class="modal-input" id="regEmail" type="email" placeholder="email@example.com"><div class="modal-label">密碼</div><input class="modal-input" type="password" id="regPassword" placeholder="至少 6 字元"><div class="modal-label">顯示名稱</div><input class="modal-input" id="regDisplayName" placeholder="你的暱稱"><div class="modal-btn-row"><button class="modal-btn primary" onclick="doRegister()">註冊</button></div><div class="auth-switch">已有帳號？<a onclick="showAuthModal(\'login\')">登錄</a></div>'))}
-async function doLogin(){const u=$('authUsername')?.value.trim(),p=$('authPassword')?.value;if(!u||!p){showToast('請填寫用戶名和密碼');return}try{const r=await fetch('api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(!d.success){showToast(d.error||'登錄失敗');return}currentUser=d.user;closeModal();renderUserArea();showToast('✅ 歡迎回來，'+(currentUser.displayName||currentUser.username));await loadSrvData();await loadUserInvestCtx();checkLocalMigration()}catch(e){showToast('登錄失敗')}}
-async function doRegister(){const u=$('regUsername')?.value.trim(),e=$('regEmail')?.value.trim(),p=$('regPassword')?.value,n=$('regDisplayName')?.value.trim();if(!u||!p){showToast('請填寫必填項');return}try{const r=await fetch('api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,email:e||undefined,password:p,display_name:n||undefined})});const d=await r.json();if(!d.success){showToast(d.error||'註冊失敗');return}currentUser=d.user;closeModal();renderUserArea();showToast('✅ 註冊成功！');await loadSrvData()}catch(e){showToast('註冊失敗')}}
-async function doLogout(){$('userDropdown')?.classList.remove('show');try{await fetch('api/auth/logout',{method:'POST'})}catch(e){}currentUser=null;renderUserArea();showToast('已登出');renderPortfolio();renderWatchlist()}
-function showProfileModal(){$('userDropdown')?.classList.remove('show');if(!currentUser)return;showModal('<div class="modal-title">👤 個人資料</div><div class="modal-label">用戶名</div><input class="modal-input" value="'+currentUser.username+'" disabled style="opacity:.6"><div class="modal-label">顯示名稱</div><input class="modal-input" id="profileName" value="'+(currentUser.displayName||'')+'"><div class="modal-label">郵箱</div><input class="modal-input" id="profileEmail" value="'+(currentUser.email||'')+'"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="doUpdateProfile()">儲存</button></div>')}
-async function doUpdateProfile(){try{const r=await fetch('api/auth/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:$('profileName').value,email:$('profileEmail').value})});const d=await r.json();if(d.success){showToast('✅ 已更新');closeModal();await checkAuth()}else showToast(d.error)}catch(e){showToast('更新失敗')}}
-function showPasswordModal(){$('userDropdown')?.classList.remove('show');showModal('<div class="modal-title">🔑 修改密碼</div><div class="modal-label">舊密碼</div><input class="modal-input" type="password" id="oldPwd"><div class="modal-label">新密碼</div><input class="modal-input" type="password" id="newPwd" placeholder="至少 6 字元"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="doChangePwd()">確認修改</button></div>')}
-async function doChangePwd(){const o=$('oldPwd').value,n=$('newPwd').value;if(!o||!n){showToast('請填寫完整');return}try{const r=await fetch('api/auth/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_password:o,new_password:n})});const d=await r.json();if(d.success){showToast('✅ 密碼已修改');closeModal()}else showToast(d.error)}catch(e){showToast('修改失敗')}}
-function checkLocalMigration(){if(!currentUser)return;const lp=JSON.parse(localStorage.getItem('stock_portfolio')||'[]'),lw=JSON.parse(localStorage.getItem('stock_watchlist')||'[]'),lc=parseFloat(localStorage.getItem('stock_cash')||'0');if(!lp.length&&!lw.length&&lc===0)return;showModal('<div class="modal-title">📥 數據遷移</div><div class="modal-info">偵測到本地有未同步數據：'+lp.length+' 筆持倉、'+lw.length+' 筆自選、現金 '+fmtP(lc)+'<br>是否合併到帳號？</div><div class="modal-btn-row"><button class="modal-btn cancel" onclick="clearLocalData()">清除本地</button><button class="modal-btn primary" onclick="doMigrate()">合併到帳號</button></div>')}
-async function doMigrate(){try{const r=await fetch('api/auth/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({portfolio:JSON.parse(localStorage.getItem('stock_portfolio')||'[]'),watchlist:JSON.parse(localStorage.getItem('stock_watchlist')||'[]'),watchlistGroups:JSON.parse(localStorage.getItem('stock_watchlist_groups')||'[]'),cash:parseFloat(localStorage.getItem('stock_cash')||'0')})});const d=await r.json();if(d.success){showToast('✅ 遷移完成');clearLocalData();await loadSrvData()}else showToast(d.error)}catch(e){showToast('遷移失敗')}}
-function clearLocalData(){['stock_portfolio','stock_portfolio_meta','stock_portfolio_analysis','stock_transactions','stock_cash','stock_alerts','stock_watchlist','stock_watchlist_meta','stock_watchlist_groups','stock_watchlist_analysis'].forEach(k=>localStorage.removeItem(k));closeModal();showToast('本地數據已清除')}
-async function loadSrvData(){if(!currentUser)return;try{const[pR,wR,tR,aR]=await Promise.all([fetch('api/portfolio'),fetch('api/watchlist'),fetch('api/transactions?limit=100'),fetch('api/alerts')]);const pD=await pR.json(),wD=await wR.json(),tD=await tR.json(),aD=await aR.json();if(pD.success){srvPortfolio=pD.portfolio;srvCash=0;srvDivs=pD.dividends||[]}if(wD.success){srvWatchlist=wD.watchlist;srvWLGroups=wD.groups}if(tD.success)srvTx=tD.transactions;if(aD.success)srvAlerts=aD.alerts}catch(e){console.error('載入服務器數據失敗:',e)}}
-// ===== 分析配置 =====
-async function loadAnalysisTypes(){try{const r=await fetch('api/config'),d=await r.json();if(!d.success)return;const ts=d.config.analysisTypes.filter(t=>t.enabled).sort((a,b)=>a.order-b.order);const c=document.querySelector('.analysis-types');if(!c)return;c.innerHTML=ts.map((t,i)=>'<button class="type-btn '+(i===0?'active':'')+'" data-type="'+t.id+'"><span class="type-icon">'+t.icon+'</span>'+t.label+'</button>').join('');bindTypes(c);if(ts.length)currentType=ts[0].id}catch(e){bindTypes(document.querySelector('.analysis-types'))}}
-function bindTypes(c){if(!c)return;c.querySelectorAll('.type-btn').forEach(b=>{b.onclick=()=>{c.querySelectorAll('.type-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');currentType=b.dataset.type}})}
-loadAnalysisTypes();
-// Markdown
-function renderMarkdown(t){if(typeof marked!=='undefined'){try{return marked.parse(t)}catch(e){}}let h=t;h=h.replace(/## (.*)/g,'<h2 style="font-size:17px;font-weight:700;margin:16px 0 8px;border-bottom:2px solid #00C853;padding-bottom:4px">$1</h2>');h=h.replace(/### (.*)/g,'<h3 style="font-size:15px;font-weight:600;margin:12px 0 6px">$1</h3>');h=h.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');h=h.replace(/^- (.*)$/gm,'<li style="margin:4px 0">$1</li>');h=h.replace(/---/g,'<hr style="border:none;border-top:1px solid #eee;margin:16px 0">');return h}
-// 首頁分析
-async function analyze(){const t=tickerInput.value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}currentTicker=t;loading.classList.add('show');resultView.classList.remove('show');loading.querySelector('.loading-text').textContent='正在獲取股價數據...';let q=null;try{const qr=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});q=await qr.json();if(q&&q.success)renderQuoteOnly(t,q);loading.querySelector('.loading-text').textContent='🤖 AI 分析師正在分析中...';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType})});const d=await r.json();if(!d.success)throw new Error(d.error||'分析失敗');renderResult(t,currentType,d.content,q);addToHistory(t,currentType);if(currentUser)fetch('api/analysis-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:currentType,content:d.content})}).catch(()=>{});showToast('分析完成！')}catch(e){showToast(e.message||'發生錯誤')}finally{loading.classList.remove('show')}}
-function renderQuoteOnly(t,q){if(!q||!q.success)return;const up=q.change>=0;resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div><div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="font-size:12px;opacity:.7">'+(q.note||'')+'</div></div><div class="loading show" style="background:transparent"><div class="spinner"></div><div class="loading-text">🤖 AI 分析師正在分析中...</div></div>';resultView.classList.add('show')}
-function renderResult(t,type,content,q){const tl={overview:'全面分析',technical:'技術面分析',fundamental:'基本面分析',risk:'風險評估',signal:'買賣信號'};let qh='';if(q&&q.success){const up=q.change>=0;qh='<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:14px;opacity:.8">'+(q.name||t)+'</div><div style="font-size:28px;font-weight:700">'+fmtP(q.price)+'</div></div><div style="text-align:right"><div style="font-size:16px;font-weight:600;color:'+(up?'#4ADE80':'#F87171')+'">'+(up?'▲':'▼')+' '+fmtP(Math.abs(q.change))+'</div><div style="font-size:14px;color:'+(up?'#4ADE80':'#F87171')+'">('+fmtPct(q.changePercent)+')</div></div></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px;opacity:.8"><div>開盤:'+fmtP(q.open)+'</div><div>最高:'+fmtP(q.high)+'</div><div>最低:'+fmtP(q.low)+'</div><div>成交量:'+(q.volume/1e6).toFixed(1)+'M</div><div>52週高:'+fmtP(q.fiftyTwoWeekHigh)+'</div><div>52週低:'+fmtP(q.fiftyTwoWeekLow)+'</div></div></div>'}let rec=null;
-// 優先查找最終結論部分
-const conclusionMatch = content.match(/##.*(?:投資結論|最終建議|結論)([\s\S]*?)(?=\n##|$)/i);
-const targetSection = conclusionMatch ? conclusionMatch[0] : content;
-const lc = targetSection.toLowerCase();
-if (lc.includes('不符合標準') || lc.includes('避開') || lc.includes('avoid')) {
-  rec={icon:'🚫',label:'不符合標準（避開）',cls:'rec-sell'};
-} else if (lc.includes('賣出') || lc.includes('bearish') || lc.includes('減碼')) {
-  rec={icon:'⚠️',label:'建議賣出',cls:'rec-sell'};
-} else if (lc.includes('買入') || lc.includes('bullish') || lc.includes('加碼') || lc.includes('符合標準')) {
-  rec={icon:'🚀',label:'建議買入',cls:'rec-buy'};
-} else if (lc.includes('持有') || lc.includes('觀望') || lc.includes('中性')) {
-  rec={icon:'⏸️',label:'建議持有',cls:'rec-hold'};
-}const rh=rec?'<div class="recommendation"><span class="rec-icon">'+rec.icon+'</span><div><div class="rec-label">投資建議</div><div class="rec-value '+rec.cls+'">'+rec.label+'</div></div></div>':'';const isIn=gWL().includes(t);resultView.innerHTML='<div class="result-header"><button class="back-btn" onclick="backToHome()">← 返回</button><span class="ticker-badge">'+t+'</span></div>'+qh+rh+'<div class="chart-container" id="chartContainer"><div class="chart-header"><span class="chart-title">📈 K線走勢圖</span><span class="chart-badge" id="chartBadge">加載中...</span></div><div id="chart"></div></div><div class="result-card"><div class="result-title">'+(tl[type]||'分析結果')+'</div><div class="result-content markdown-body">'+renderMarkdown(content)+'</div></div><div class="action-row"><button class="action-btn secondary" onclick="toggleWatchlist(\''+t+'\')">'+(isIn?'⭐ 已加入自選':'☆ 加入自選')+'</button><button class="action-btn secondary" onclick="copyResult()">📋 複製</button><button class="action-btn primary" onclick="askMore()">💬 追問</button></div>';resultView.classList.add('show');setTimeout(()=>loadChart(t),500)}
-async function loadChart(t){const el=$('chart'),bd=$('chartBadge');if(!el)return;if(typeof LightweightCharts==='undefined'){await new Promise(r=>setTimeout(r,1500));if(typeof LightweightCharts==='undefined'){el.innerHTML='<div class="chart-error">⚠️ K線圖庫載入失敗</div>';return}}try{const r=await fetch('api/chart/'+t),d=await r.json();if(d.success&&d.candles&&d.candles.length>0){if(chart)chart.remove();chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:280,layout:{backgroundColor:'#fff',textColor:'#333'},grid:{vertLines:{color:'#e5e7eb'},horLines:{color:'#e5e7eb'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'#e5e7eb'},timeScale:{borderColor:'#e5e7eb'}});const s=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});s.setData(d.candles);chart.timeScale().fitContent();bd.textContent='✅ 實時數據';bd.style.color='var(--accent)';window.addEventListener('resize',()=>{if(chart)chart.resize(el.clientWidth,280)})}else{el.innerHTML='<div class="chart-error">📊 K 線圖需要 API Key</div>';bd.textContent='⚠️ 需要 API'}}catch(e){el.innerHTML='<div class="chart-error">載入失敗</div>';bd.textContent='❌ 錯誤'}}
-function backToHome(){resultView.classList.remove('show');renderHistory()}
-function copyResult(){const c=document.querySelector('.result-content');if(c)navigator.clipboard.writeText(c.textContent);showToast('已複製')}
-function askMore(){showPage('chat')}
-function addToHistory(t,type){history=[{ticker:t,type,time:Date.now()},...history.filter(h=>h.ticker!==t)].slice(0,10);saveLS('stock_history',history)}
-function renderHistory(){if(!history.length){historyList.innerHTML='<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">開始分析你的第一支股票</div></div>';return}const tl={overview:'全面',technical:'技術',fundamental:'基本面',risk:'風險',signal:'信號'};historyList.innerHTML=history.map(h=>'<div class="history-item" onclick="loadHistory(\''+h.ticker+'\',\''+h.type+'\')"><div class="history-ticker">'+h.ticker.substring(0,4)+'</div><div class="history-info"><div class="history-title">'+h.ticker+'</div><div class="history-type">'+(tl[h.type]||h.type)+'</div></div><div class="history-arrow">›</div></div>').join('')}
-function loadHistory(t,type){tickerInput.value=t;document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active',b.dataset.type===type));currentType=type;analyze()}
-// Chat
-async function sendChat(){const msg=$('chatInput').value.trim();if(!msg)return;$('chatMessages').innerHTML+='<div class="chat-msg user">'+msg+'</div>';$('chatInput').value='';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;$('chatMessages').innerHTML+='<div class="chat-msg ai">思考中...</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight;try{const res=await fetch('api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:msg}]})});const data=await res.json();$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai markdown-body">'+renderMarkdown(data.content)+'</div>';$('chatMessages').scrollTop=$('chatMessages').scrollHeight}catch(e){$('chatMessages').lastElementChild.remove();$('chatMessages').innerHTML+='<div class="chat-msg ai">發生錯誤，請稍後再試</div>'}}
-// ===== 自選股 =====
-async function toggleWatchlist(t){const tickers=gWL();if(currentUser){if(tickers.includes(t)){await fetch('api/watchlist/'+t,{method:'DELETE'});showToast('已從自選移除')}else{await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});showToast('已添加到自選')}await loadSrvData()}else{const i=offWatchlist.indexOf(t);if(i>-1){offWatchlist.splice(i,1);showToast('已從自選移除')}else{offWatchlist.push(t);showToast('已添加到自選')}saveLS('stock_watchlist',offWatchlist)}renderWatchlist()}
-async function addToWatchlistDirect(){const t=$('wlTickerInput').value.trim().toUpperCase();if(!t){showToast('請輸入股票代碼');return}if(currentUser){const r=await fetch('api/watchlist/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});const d=await r.json();if(!d.success){showToast(d.error);return}await loadSrvData()}else{if(offWatchlist.includes(t)){showToast(t+' 已在自選中');return}offWatchlist.push(t);saveLS('stock_watchlist',offWatchlist)}$('wlTickerInput').value='';showToast('✅ 已添加 '+t);renderWatchlist()}
-function showAddGroupDialog(){showModal('<div class="modal-title">📁 新增自選分組</div><input class="modal-input" id="newGroupName" placeholder="分組名稱"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="addWLGroup()">新增</button></div>')}
-async function addWLGroup(){const n=$('newGroupName').value.trim();if(!n){showToast('請輸入名稱');return}if(currentUser){await fetch('api/watchlist/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});await loadSrvData()}else{offWLGroups.push(n);saveLS('stock_watchlist_groups',offWLGroups)}closeModal();renderWatchlist();showToast('✅ 已新增：'+n)}
-async function removeFromWatchlist(t){if(currentUser){await fetch('api/watchlist/'+t,{method:'DELETE'});await loadSrvData()}else{offWatchlist=offWatchlist.filter(x=>x!==t);saveLS('stock_watchlist',offWatchlist)}renderWatchlist();showToast('已移除 '+t)}
-function quickAnalyze(t){tickerInput.value=t;showPage('home');analyze()}
-function showBuyDialogFor(t,p){showBuyDialog(t,p)}
-async function renderWatchlist(){const container=$('watchlistCards');const tickers=gWL();const groups=gWLGroups();const gsel=$('wlGroupSelect');if(gsel){const cv=gsel.value;gsel.innerHTML='<option value="all">全部分組</option>'+groups.map(g=>'<option value="'+g+'">'+g+'</option>').join('');gsel.value=cv||'all'}if(!tickers.length){container.innerHTML='<div class="empty"><div class="empty-icon">⭐</div><div class="empty-text">'+(currentUser?'輸入代碼添加自選股':'登錄後可同步自選股數據，或直接添加')+'</div></div>';return}container.innerHTML='<div class="loading show"><div class="spinner"></div></div>';try{const r=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const d=await r.json();if(!d.success)throw new Error('獲取失敗');let quotes=d.quotes.filter(q=>q.success);const sort=$('wlSortSelect')?.value||'default';if(sort==='change-desc')quotes.sort((a,b)=>(b.changePercent||0)-(a.changePercent||0));else if(sort==='change-asc')quotes.sort((a,b)=>(a.changePercent||0)-(b.changePercent||0));else if(sort==='name-asc')quotes.sort((a,b)=>(a.name||a.ticker).localeCompare(b.name||b.ticker));else if(sort==='priority'&&currentUser){const wlm={};srvWatchlist.forEach(w=>{wlm[w.ticker]=w.priority||0});quotes.sort((a,b)=>(wlm[b.ticker]||0)-(wlm[a.ticker]||0))}const grp=$('wlGroupSelect')?.value||'all';if(grp!=='all'&&currentUser){const gMap={};srvWatchlist.forEach(w=>{gMap[w.ticker]=w.group_name});quotes=quotes.filter(q=>gMap[q.ticker]===grp)}container.innerHTML=quotes.map(q=>{const up=q.change>=0;let meta={};if(currentUser){const w=srvWatchlist.find(w=>w.ticker===q.ticker);if(w)meta=w}else{const wlMeta=JSON.parse(localStorage.getItem('stock_watchlist_meta')||'{}');meta=wlMeta[q.ticker]||{}}const priority=meta.priority||0;const targetBuy=meta.target_buy_price||0;const targetSell=meta.target_sell_price||0;const note=meta.note||'';const group=meta.group_name||'';return '<div class="wl-card'+(priority?' style="border-left:3px solid #ef4444"':'')+'"><div class="wl-header"><div><div class="wl-ticker">'+q.ticker+(priority?' <span class="priority-tag">🔴重點</span>':'')+(group?' <span class="wl-group-tag">'+group+'</span>':'')+'</div><div class="wl-name">'+q.name+'</div></div><div style="text-align:right"><div class="wl-current" style="color:'+udC(q.change)+'">'+fmtP(q.price)+'</div><div class="wl-change" style="color:'+udC(q.change)+'">'+udA(q.change)+' '+fmtPct(q.changePercent)+'</div></div></div>'+(note?'<div class="wl-note"><div class="wl-note-text">📝 '+note+'</div><button class="wl-btn note" style="padding:2px 8px;font-size:10px" onclick="showWLNoteModal(\''+q.ticker+'\')">✏️</button></div>':'')+(targetBuy||targetSell?'<div style="margin-top:6px;font-size:11px">'+(targetBuy?'<span class="target-price-tag target-buy">🎯 買 '+fmtP(targetBuy)+(q.price<=targetBuy?' ✓到價':'')+'</span>':'')+(targetSell?'<span class="target-price-tag target-sell">🎯 賣 '+fmtP(targetSell)+(q.price>=targetSell?' ✓到價':'')+'</span>':'')+'</div>':'')+'<div class="wl-actions"><button class="wl-btn analyze" onclick="quickAnalyze(\''+q.ticker+'\')">🎯 分析</button><button class="wl-btn buy" onclick="showBuyDialogFor(\''+q.ticker+'\','+q.price+')">📈 買入</button><button class="wl-btn note" onclick="showWLNoteModal(\''+q.ticker+'\')">📝 備註</button>'+(currentUser?'<button class="wl-btn" onclick="setWLPriority(\''+q.ticker+'\','+priority+')" style="color:'+(priority?'#ef4444':'#6b7280')+';border-color:'+(priority?'#ef4444':'#e5e7eb')+'">'+(priority?'🔴 取消重點':'📍 重點')+'</button>':'')+'<button class="wl-btn remove" onclick="removeFromWatchlist(\''+q.ticker+'\')">✕ 移除</button></div></div>'}).join('');if(!quotes.length)container.innerHTML='<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">此分組無股票</div></div>'}catch(e){container.innerHTML='<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗：'+e.message+'</div></div>'}}
-async function showWLNoteModal(t){if(currentUser){const w=srvWatchlist.find(w=>w.ticker===t)||{};showModal('<div class="modal-title">📝 '+t+' 備註</div><div class="modal-label">觀察備註</div><textarea class="modal-input" id="wlNoteTA" rows="3" style="resize:vertical">'+(w.note||'')+'</textarea><div class="modal-label">分組</div><select class="modal-input" id="wlGroupSel" style="margin-bottom:0"><option value="">不分組</option>'+srvWLGroups.map(g=>'<option value="'+g+'" '+(w.group_name===g?'selected':'')+'>'+g+'</option>').join('')+'</select><div class="modal-label">目標買入價</div><input class="modal-input" type="number" id="wlTargetBuy" step="0.01" value="'+(w.target_buy_price||'')+'"><div class="modal-label">目標賣出價</div><input class="modal-input" type="number" id="wlTargetSell" step="0.01" value="'+(w.target_sell_price||'')+'"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="saveWLNote(\''+t+'\')">儲存</button></div>')}else{const wlMeta=JSON.parse(localStorage.getItem('stock_watchlist_meta')||'{}');const m=wlMeta[t]||{};showModal('<div class="modal-title">📝 '+t+' 備註</div><textarea class="modal-input" id="wlNoteTA" rows="3" placeholder="觀察理由">'+(m.note||'')+'</textarea><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="saveWLNoteOff(\''+t+'\')">儲存</button></div>')}}
-async function saveWLNote(t){if(!currentUser)return;const note=$('wlNoteTA').value.trim(),group=$('wlGroupSel').value,tb=parseFloat($('wlTargetBuy').value)||0,ts=parseFloat($('wlTargetSell').value)||0;const w=srvWatchlist.find(w=>w.ticker===t)||{};await fetch('api/watchlist/'+t,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_name:group,note,target_buy_price:tb,target_sell_price:ts,priority:w.priority||0})});await loadSrvData();closeModal();renderWatchlist();showToast('備註已儲存')}
-function saveWLNoteOff(t){const wlMeta=JSON.parse(localStorage.getItem('stock_watchlist_meta')||'{}');if(!wlMeta[t])wlMeta[t]={};wlMeta[t].note=$('wlNoteTA').value.trim();saveLS('stock_watchlist_meta',wlMeta);closeModal();renderWatchlist();showToast('備註已儲存')}
-async function setWLPriority(t,cur){if(!currentUser)return;const w=srvWatchlist.find(w=>w.ticker===t);if(!w)return;await fetch('api/watchlist/'+t,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({priority:cur?0:1})});await loadSrvData();renderWatchlist();showToast(cur?'已取消重點':'🔴 已標記重點觀察')}
-async function batchAnalyzeWatchlist(){const tickers=gWL();if(!tickers.length){showToast('自選列表為空');return}let bar=$('progressBar');if(!bar){bar=document.createElement('div');bar.id='progressBar';bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(90deg,#00C853,#4ADE80);padding:12px;color:#fff;font-size:14px;text-align:center';document.body.appendChild(bar)}bar.style.display='block';let c=0;for(const t of tickers){try{const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,type:'signal'})});const d=await r.json();if(d.success){let rec='';const m1=d.content.match(/\*\*最終建議：?\*\* (.*?)(?:\n|$)/);if(m1)rec=m1[1].trim();if(!rec){const m2=d.content.match(/\*\*當前建議：?\*\* (.*?)(?:\n|$)/);if(m2)rec=m2[1].trim()}if(currentUser){await fetch('api/watchlist/'+t,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:(srvWatchlist.find(w=>w.ticker===t)||{}).note||''})})}}}catch(e){}c++;bar.innerHTML='分析中... ('+c+'/'+tickers.length+') <div style="background:rgba(255,255,255,.3);border-radius:4px;height:6px;margin-top:8px"><div style="background:#fff;height:6px;border-radius:4px;width:'+Math.round(c/tickers.length*100)+'%;transition:width .3s"></div></div>'}setTimeout(()=>{if(bar)bar.style.display='none'},500);showToast('✅ 批量分析完成！');renderWatchlist()}
-// ===== 持倉 =====
 
-function showBuyDialog(tickerPreset,pricePreset){const t=tickerPreset||'',p=pricePreset||0;const today=new Date().toISOString().split('T')[0];showModal('<div class="modal-title">📈 新增持倉</div><div class="modal-info">記錄買入的股票持倉</div><div class="modal-label">股票代碼</div><input class="modal-input" id="buyTicker" value="'+t+'" placeholder="AAPL" style="text-transform:uppercase"><div class="modal-label">買入價格</div><input class="modal-input" type="number" id="buyPrice" step="0.01" value="'+(p?p.toFixed(2):'')+'" placeholder="0.00" oninput="updateBuyCost()"><div class="modal-label">買入股數</div><input class="modal-input" type="number" id="buyShares" min="1" value="1" oninput="updateBuyCost()"><div class="modal-cost" id="buyCostEst">預估本金: $0.00</div><div class="modal-label">買入時間</div><input class="modal-input" type="date" id="buyDate" value="'+today+'"><div class="modal-label">止損價（選填）</div><input class="modal-input" type="number" id="buySL" step="0.01" placeholder="止損價"><div class="modal-label">止盈價（選填）</div><input class="modal-input" type="number" id="buyTP" step="0.01" placeholder="止盈價"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="doBuy()">確認加倉</button></div>')}
-function updateBuyCost(){const s=parseInt($('buyShares')?.value)||0,p=parseFloat($('buyPrice')?.value)||0;const total=s*p;const el=$('buyCostEst');if(el)el.textContent='預估本金: '+fmtP(total)}
-async function doBuy(){const t=$('buyTicker')?.value?.trim()?.toUpperCase(),p=parseFloat($('buyPrice')?.value),s=parseInt($('buyShares')?.value);const sl=parseFloat($('buySL')?.value)||0,tp=parseFloat($('buyTP')?.value)||0;const buyDate=$('buyDate')?.value||'';if(!t||!p||p<=0||!s||s<=0){showToast('請填寫股票代碼、價格和股數');return}const cost=s*p;if(currentUser){try{const body={ticker:t,shares:s,price:p,stop_loss:sl,take_profit:tp};if(buyDate)body.buy_date=buyDate;const r=await fetch('api/portfolio/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(d.success){showToast('✅ 已買入 '+t+' '+s+'股 @ '+fmtP(p));closeModal();await loadSrvData();renderPortfolio()}else showToast(d.error||'買入失敗')}catch(e){showToast('買入失敗：'+e.message)}}else{const exist=offPortfolio.find(x=>x.ticker===t);if(exist){const ts=exist.shares+s;const tc=exist.shares*exist.buyPrice+s*p;exist.shares=ts;exist.buyPrice=tc/ts;exist.transactions=exist.transactions||[];const buyTs=buyDate?new Date(buyDate+'T12:00:00').getTime():Date.now();exist.transactions.push({type:'buy',shares:s,price:p,date:buyTs})}else{const buyTs=buyDate?new Date(buyDate+'T12:00:00').getTime():Date.now();offPortfolio.push({ticker:t,shares:s,buyPrice:p,date:buyTs,transactions:[{type:'buy',shares:s,price:p,date:buyTs}]})}saveLS('stock_portfolio',offPortfolio);const buyTs2=buyDate?new Date(buyDate+'T12:00:00').getTime():Date.now();offTx.push({type:'buy',ticker:t,shares:s,price:p,cost,date:buyTs2});saveLS('stock_transactions',offTx);closeModal();renderPortfolio();showToast('✅ 已買入 '+t+' '+s+'股 @ '+fmtP(p))}}
-async function showSellDialog(t,shares,cp){const h=gPF().find(x=>(x.ticker||x.ticker)===t);if(!h)return;const realShares=currentUser?h.shares:h.shares;const avgPrice=currentUser?h.buy_price:h.buyPrice;showModal('<div class="modal-title">📉 賣出 '+t+'</div><div class="modal-info">持有: '+realShares+'股 | 成本均價: '+fmtP(avgPrice)+' | 當前: '+fmtP(cp)+'</div><div class="modal-label">賣出股數（最多 '+realShares+'）</div><input class="modal-input" type="number" id="sellShares" min="1" max="'+realShares+'" value="'+realShares+'"><div class="modal-cost" id="sellRevEst">預估收入: '+fmtP(realShares*cp)+'</div>'+(h.stop_loss?'<div style="font-size:12px;color:#ef4444;margin-bottom:8px">🛑 止損: '+fmtP(h.stop_loss)+(cp<=h.stop_loss?' ⚠️已觸及！':'')+'</div>':'')+(h.take_profit?'<div style="font-size:12px;color:#22c55e;margin-bottom:8px">🎯 止盈: '+fmtP(h.take_profit)+(cp>=h.take_profit?' ⚠️已觸及！':'')+'</div>':'')+'<div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn danger" onclick="doSell(\''+t+'\')">確認賣出</button></div>')}
-async function doSell(t){const s=parseInt($('sellShares').value);if(!s||s<=0){showToast('無效股數');return}if(currentUser){const h=srvPortfolio.find(x=>x.ticker===t);if(!h||s>h.shares){showToast('無效股數');return}try{const qR=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});const q=await qR.json();if(!q.success){showToast('無法獲取價格');return}const r=await fetch('api/portfolio/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t,shares:s,price:q.price})});const d=await r.json();if(d.success){showToast('✅ 已賣出 '+t+' '+s+'股'+(d.profit>=0?' 賺':' 虧')+' '+fmtP(Math.abs(d.profit)));closeModal();await loadSrvData();renderPortfolio()}else showToast(d.error)}catch(e){showToast('賣出失敗')}}else{const h=offPortfolio.find(x=>x.ticker===t);if(!h||s>h.shares){showToast('無效股數');return}const qR=await fetch('api/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:t})});const q=await qR.json();if(!q.success){showToast('無法獲取價格');return}const cp=q.price;const profit=(cp-h.buyPrice)*s;h.shares-=s;if(h.shares<=0)offPortfolio=offPortfolio.filter(x=>x.ticker!==t);offTx.push({type:'sell',ticker:t,shares:s,price:cp,revenue:s*cp,profit,date:Date.now()});saveLS('stock_portfolio',offPortfolio);saveLS('stock_transactions',offTx);closeModal();renderPortfolio();showToast('✅ 已賣出'+(profit>=0?' 賺':' 虧')+' '+fmtP(Math.abs(profit)))}}
-function showSLTPDialog(t,cp){const h=gPF().find(x=>(x.ticker||x.ticker)===t);if(!h)return;const sl=currentUser?h.stop_loss:(h.stopLoss||0),tp=currentUser?h.take_profit:(h.takeProfit||0);showModal('<div class="modal-title">🛑🎯 '+t+' 止損止盈</div><div class="modal-info">當前價格: '+fmtP(cp)+'</div><div class="modal-label">止損價</div><input class="modal-input" type="number" id="slInput" step="0.01" value="'+(sl||'')+'"><div class="modal-label">止盈價</div><input class="modal-input" type="number" id="tpInput" step="0.01" value="'+(tp||'')+'"><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="saveSLTP(\''+t+'\')">儲存</button></div>')}
-async function saveSLTP(t){const sl=parseFloat($('slInput').value)||0,tp=parseFloat($('tpInput').value)||0;if(currentUser){await fetch('api/portfolio/'+t+'/sltp',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({stop_loss:sl,take_profit:tp})});await loadSrvData()}else{const h=offPortfolio.find(x=>x.ticker===t);if(h){if(!offPortfolio.meta)offPortfolio.meta={};h.stopLoss=sl;h.takeProfit=tp;saveLS('stock_portfolio',offPortfolio)}}closeModal();renderPortfolio();showToast('止損止盈已更新')}
-function toggleTxPanel(){const p=$('txPanel'),o=$('txOverlay');p.classList.toggle('open');o.classList.toggle('open');if(p.classList.contains('open'))renderTxPanel()}
-function renderTxPanel(){const body=$('txPanelBody');const txs=gTx();if(!txs.length){body.innerHTML='<div class="empty" style="padding:40px 20px"><div class="empty-icon">📋</div><div class="empty-text">尚無交易記錄</div></div>';return}body.innerHTML=txs.slice().reverse().map(tx=>{const isBuy=tx.type==='buy',isDiv=tx.type==='dividend',isDep=tx.type==='deposit';return '<div class="tx-item"><span class="tx-type '+(isBuy?'buy':isDiv?'dividend':isDep?'deposit':'sell')+'">'+(isBuy?'買入':isDiv?'股息':isDep?'存入':'賣出')+'</span><div class="tx-info"><div class="tx-ticker">'+(tx.ticker||'-')+'</div><div class="tx-detail">'+(tx.shares||0)+'股 @ '+fmtP(tx.price)+' | '+fmtD(tx.created_at||tx.date)+'</div></div><div class="tx-amount" style="color:'+(isBuy||isDep?'#ef4444':'#22c55e')+'">'+(isBuy||isDep?'-':'+')+fmtP(tx.amount||tx.cost||tx.revenue||0)+'</div></div>'}).join('')}
-async function analyzePortfolioAll(){const pf=gPF();if(!pf.length){showToast('尚無持倉');return}const list=$('portfolioList');list.innerHTML+='<div class="loading show" id="pfAILoading"><div class="spinner"></div><div style="text-align:center;padding:16px;color:var(--text-secondary)">🤖 AI 正在獲取即時報價並分析持倉...</div></div>';try{const tickers=pf.map(p=>currentUser?p.ticker:p.ticker);const qr=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const qd=await qr.json();const quotes=qd.success?qd.quotes:{};let totalValue=0,totalCost=0;const details=pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const cp=quotes[t]?.price||bp;const mv=sh*cp;const cost=sh*bp;const pnl=mv-cost;const pnlPct=cost>0?(pnl/cost*100):0;totalValue+=mv;totalCost+=cost;return{t,sh,bp,cp,mv,cost,pnl,pnlPct}});const totalPnL=totalValue-totalCost;const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;let summary='持倉組合明細（基於即時報價）：\n';summary+=`總本金：$${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總市值：$${totalValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n`;summary+=`總損益：$${totalPnL.toFixed(2)} (${totalPnLPct>=0?'+':''}${totalPnLPct.toFixed(2)}%)\n\n`;summary+='| 股票 | 持股 | 成本均價 | 現價 | 本金 | 市值 | 佔比 | 損益金額 | 損益比例 |\n';summary+='|------|------|----------|------|------|------|------|----------|----------|\n';details.sort((a,b)=>b.mv-a.mv).forEach(d=>{const w=totalValue>0?(d.mv/totalValue*100):0;summary+=`| ${d.t} | ${d.sh}股 | $${d.bp.toFixed(2)} | $${d.cp.toFixed(2)} | $${d.cost.toFixed(2)} | $${d.mv.toFixed(2)} | ${w.toFixed(1)}% | $${d.pnl.toFixed(2)} | ${d.pnlPct>=0?'+':''}${d.pnlPct.toFixed(2)}% |\n`});summary+='\n請基於以上**真實市值佔比數據**進行分析，重點關注：\n1. 個股佔比是否合理（單股>30%屬過度集中）\n2. 行業集中度風險\n3. 具體加倉/減倉/提倉建議（請引用實際佔比數字）\n4. 是否需要新增新的個股標的以分散風險\n5. 組合整體風險評估和優化方向\n6. 請在最後提供一段總結，明確指出每支個股的加倉/減倉/提倉/新增建議';const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:tickers.join(','),type:'portfolio',question:summary})});const d=await r.json();const ld=$('pfAILoading');if(ld)ld.remove();if(d.success){list.innerHTML='<div class="result-card" style="border-left:4px solid var(--accent)"><div class="result-title">🤖 AI 持倉組合分析</div><div class="result-content markdown-body">'+renderMarkdown(d.content)+'</div></div>'+list.innerHTML}else showToast('分析失敗：'+(d.error||'未知'))}catch(e){const ld=$('pfAILoading');if(ld)ld.remove();showToast('AI 分析服務暫時不可用')}}
-// 持倉頁渲染
-async function renderPortfolio(){const pf=gPF();const summaryEl=$('pfSummary'),listEl=$('portfolioList');if(!pf.length){summaryEl.innerHTML='<div class="pf-summary-grid"><div class="pf-stat"><div class="pf-stat-label">總本金</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">總市值</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">總損益</div><div class="pf-stat-value">$0.00</div></div><div class="pf-stat"><div class="pf-stat-label">損益比例</div><div class="pf-stat-value">0.00%</div></div></div>';listEl.innerHTML='<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">尚無持倉，點擊「買入股票」新增持倉</div></div>';return}listEl.innerHTML='<div class="loading show"><div class="spinner"></div></div>';try{const tickers=pf.map(p=>currentUser?p.ticker:p.ticker);let quotes={};if(tickers.length){const r=await fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})});const d=await r.json();d.quotes?.forEach(q=>{if(q.success)quotes[q.ticker]=q})}let totalCost=0,totalValue=0;pf.forEach(p=>{const bp=currentUser?p.buy_price:p.buyPrice;const sh=currentUser?p.shares:p.shares;totalCost+=sh*bp;totalValue+=sh*(quotes[currentUser?p.ticker:p.ticker]?.price||bp)});const totalPnL=totalValue-totalCost;const totalPnLPct=totalCost>0?(totalPnL/totalCost*100):0;
-// 行業分布計算
-const sectorAlloc={};pf.forEach(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const v=sh*(quotes[t]?.price||bp);const s=getSector(t);sectorAlloc[s]=(sectorAlloc[s]||0)+v});
-// 健康評分計算
-let healthScore=3;const maxRatio=pf.length?Math.max(...pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;return sh*(quotes[t]?.price||bp)/totalValue})):0;if(maxRatio<0.2)healthScore++;if(maxRatio<0.3)healthScore++;if(pf.every(p=>currentUser?p.stop_loss:p.stopLoss))healthScore++;if(pf.length>=3)healthScore--;if(healthScore>5)healthScore=5;if(healthScore<1)healthScore=1;let healthDesc="";if(healthScore>=5)healthDesc="🟢 組合極度均衡，分散風險表現優異，值得保持";else if(healthScore>=4)healthDesc="🟢 組合分散良好，個股集中度可控，可繼續持有";else if(healthScore>=3)healthDesc="🟡 組合適中，部分個股佔比偏高，建議關注集中度風險";else if(healthScore>=2)healthDesc="🟠 組合偏集中，單一股位影響過大，建議適度減碼分散";else healthDesc="🔴 組合高度集中，風險暴露顯著，強烈建議分散持倉";
-// 圓環圖CSS
+// ===== 版本標識 =====
 
-summaryEl.innerHTML='<div class="pf-summary-grid"><div class="pf-stat"><div class="pf-stat-label">總本金</div><div class="pf-stat-value">'+fmtP(totalCost)+'</div></div><div class="pf-stat"><div class="pf-stat-label">總市值</div><div class="pf-stat-value">'+fmtP(totalValue)+'</div></div><div class="pf-stat"><div class="pf-stat-label">總損益</div><div class="pf-stat-value '+(totalPnL>=0?'up':'down')+'">'+fmtP(totalPnL)+'</div></div><div class="pf-stat"><div class="pf-stat-label">損益比例</div><div class="pf-stat-value '+(totalPnL>=0?'up':'down')+'">'+fmtPct(totalPnLPct)+'</div></div></div>'+
-'<div style="margin-top:16px"><div style="display:flex;gap:16px;align-items:center"><div style="flex-shrink:0"><canvas id="pieChart" width="160" height="160"></canvas></div><div style="flex:1"><div style="font-size:12px;opacity:.8;margin-bottom:8px">持倉佔比</div>'+pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const v=sh*(quotes[t]?.price||bp);const pct=totalValue>0?(v/totalValue*100):0;const sector=getSector(t);return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:11px"><span class="sector-dot" style="background:'+SCOLORS[sector]+'"></span><span>'+t+'</span><span style="opacity:.7">'+pct.toFixed(1)+'%</span></div>'}).join('')+'</div></div></div>'+
-'<div class="health-score" style="margin-top:12px;font-size:12px;opacity:.9">持倉健康度: '+'★'.repeat(healthScore)+'☆'.repeat(5-healthScore)+'<div style="margin-top:4px;font-size:11px;opacity:.8;line-height:1.4">'+healthDesc+'</div></div>';
-listEl.innerHTML=pf.map(p=>{const t=currentUser?p.ticker:p.ticker;const sh=currentUser?p.shares:p.shares;const bp=currentUser?p.buy_price:p.buyPrice;const q=quotes[t];const cp=q?.price||bp;const cost=sh*bp;const value=sh*cp;const profit=value-cost;const profitPct=cost>0?(profit/cost*100):0;const ratio=totalValue>0?(value/totalValue*100):0;const up=profit>=0;const chg=q?.change||0;const chgPct=q?.changePercent||0;const sl=currentUser?p.stop_loss:p.stopLoss;const tp=currentUser?p.take_profit:p.takeProfit;const note=currentUser?p.note:p.note||'';const holdDays=fmtDays(currentUser?p.created_at:p.date);const dayPnl=q?(cp-(q.prevClose||cp-chg))*sh:0;const sector=getSector(t);return '<div class="holding-card"><div class="holding-header"><div><div class="holding-ticker">'+t+' <span class="wl-group-tag" style="background:'+SCOLORS[sector]+'22;color:'+SCOLORS[sector]+'">'+sector+'</span></div><div class="holding-name">'+(q?.name||'')+'</div></div><div style="text-align:right"><div class="holding-current" style="color:'+udC(chg)+'">'+fmtP(cp)+'</div><div class="holding-change" style="color:'+udC(chg)+'">'+udA(chg)+' '+fmtPct(chgPct)+'</div></div></div><div class="holding-details"><div><div class="holding-detail-label">持股數</div><div class="holding-detail-value">'+sh+'</div></div><div><div class="holding-detail-label">成本均價</div><div class="holding-detail-value">'+fmtP(bp)+'</div></div><div><div class="holding-detail-label">持倉佔比</div><div class="holding-detail-value">'+ratio.toFixed(1)+'%'+(ratio>40?' 🔴':ratio>25?' ⚠️':'')+'</div></div><div><div class="holding-detail-label">買入時間</div><div class="holding-detail-value" style="font-size:10px">'+new Date(currentUser?p.created_at:p.date).toLocaleDateString('zh-TW',{year:'numeric',month:'short',day:'numeric'})+'</div></div><div><div class="holding-detail-label">持有天數</div><div class="holding-detail-value" style="color:'+(parseInt(holdDays)<30?'#f59e0b':parseInt(holdDays)<180?'#3b82f6':'#22c55e')+'">'+holdDays+'</div></div><div><div class="holding-detail-label">成本總額</div><div class="holding-detail-value">'+fmtP(cost)+'</div></div><div><div class="holding-detail-label">損益</div><div class="holding-detail-value holding-pnl" style="color:'+udC(profit)+'">'+(up?'+':'')+fmtP(profit)+' ('+fmtPct(profitPct)+')</div></div></div>'+(ratio>25?'<div class="risk-warn '+(ratio>40?'high':'mid')+'">'+(ratio>40?'🔴 高度集中風險 (>40%)':'⚠️ 集中度偏高 (>25%)')+'</div>':'')+(sl?'<span class="sl-tp-tag sl-tag">🛑 SL '+fmtP(sl)+(cp<=sl?' ⚠️觸及':'')+'</span>':'')+(tp?'<span class="sl-tp-tag tp-tag">🎯 TP '+fmtP(tp)+(cp>=tp?' ⚠️觸及':'')+'</span>':'')+(note?'<div style="font-size:11px;color:#6b7280;margin-top:6px;font-style:italic">📝 '+note+'</div>':'')+'<div class="holding-actions"><button class="h-btn analyze" onclick="quickAnalyze(\''+t+'\')">🎯 分析</button><button class="h-btn buy" onclick="showBuyDialog(\''+t+'\','+cp+')">📈 加碼</button><button class="h-btn sell" onclick="showSellDialog(\''+t+'\','+sh+','+cp+')">📉 賣出</button><button class="h-btn" onclick="showSLTPDialog(\''+t+'\','+cp+')">🛑🎯 止損止盈</button><button class="h-btn" onclick="showHoldingNote(\''+t+'\')">📝 備註</button></div></div>'}).join('');setTimeout(()=>renderPieChart(pf,quotes,totalValue),150)}catch(e){listEl.innerHTML='<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗：'+e.message+'</div></div>'}}
-function showHoldingNote(t){const h=gPF().find(x=>(x.ticker||x.ticker)===t);if(!h)return;const note=currentUser?h.note:(h.note||'');showModal('<div class="modal-title">📝 '+t+' 投資備註</div><div class="modal-label">買入理由 / 後續計劃</div><textarea class="modal-input" id="holdingNoteTA" rows="3" style="resize:vertical">'+note+'</textarea><div class="modal-btn-row"><button class="modal-btn cancel" onclick="closeModal()">取消</button><button class="modal-btn primary" onclick="saveHoldingNote(\''+t+'\')">儲存</button></div>')}
-async function saveHoldingNote(t){const note=$('holdingNoteTA').value.trim();if(currentUser){await fetch('api/portfolio/'+t+'/note',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});await loadSrvData()}else{const h=offPortfolio.find(x=>x.ticker===t);if(h){h.note=note;saveLS('stock_portfolio',offPortfolio)}}closeModal();renderPortfolio();showToast('備註已儲存')}
+console.log('StockAI v2.2.0 - Modular Build');
 
-// Chart.js 圓餅圖渲染
-let pieChartInstance=null;
-function renderPieChart(pf,quotes,totalValue){
-  const canvas=document.getElementById('pieChart');
-  if(!canvas||typeof Chart==='undefined')return;
-  if(pieChartInstance)pieChartInstance.destroy();
-  const colors=['#3b82f6','#f59e0b','#22c55e','#8b5cf6','#ec4899','#f97316','#06b6d4','#84cc16','#a855f7','#64748b','#ef4444','#14b8a6'];
-  const labels=[],data=[],bgColors=[];
-  pf.forEach((p,i)=>{
-    const t=currentUser?p.ticker:p.ticker;
-    const sh=currentUser?p.shares:p.shares;
-    const bp=currentUser?p.buy_price:p.buyPrice;
-    const v=sh*(quotes[t]?.price||bp);
-    labels.push(t);
-    data.push(v);
-    bgColors.push(colors[i%colors.length]);
-  });
-  pieChartInstance=new Chart(canvas,{
-    type:'doughnut',
-    data:{labels,datasets:[{data,backgroundColor:bgColors,borderWidth:0,hoverOffset:6}]},
-    options:{
-      responsive:false,
-      cutout:'55%',
-      plugins:{
-        legend:{display:false},
-        tooltip:{callbacks:{label:ctx=>ctx.label+': '+fmtP(ctx.parsed)+' ('+((ctx.parsed/totalValue)*100).toFixed(1)+'%)'}}
-      }
+// ===== 模組加載狀態 =====
+
+var modulesLoaded = false;
+
+function onModulesReady() {
+    if (modulesLoaded) return;
+    modulesLoaded = true;
+    
+    // 觸發 app-init.js 中的初始化邏輯
+    if (window.__initReady) {
+        window.__initReady();
     }
-  });
 }
 
+// ===== 兼容性聲明 =====
 
-// 用戶投資上下文 — 讓 AI 知道持倉和自選股
-let userInvestCtx = { hasPortfolio: false, hasWatchlist: false, context: '' };
-async function loadUserInvestCtx() {
-  if (!currentUser) { userInvestCtx = { hasPortfolio: false, hasWatchlist: false, context: '' }; return; }
-  try {
-    const r = await fetch('api/user-context');
-    const d = await r.json();
-    if (d.success) userInvestCtx = d;
-    // Update UI indicator
-    const el = document.getElementById('aiCtxIndicator');
-    if (el) {
-      const parts = [];
-      if (d.hasPortfolio) parts.push('💼持倉');
-      if (d.hasWatchlist) parts.push('⭐自選');
-      el.textContent = parts.length ? '🤖 AI 已知: ' + parts.join('+') : '🤖 AI: 未登錄';
-      el.style.display = 'inline-block';
-    }
-  } catch(e) { console.warn('loadUserInvestCtx error:', e); }
-}
+/**
+ * 以下函數在本版本中已移動到對應模組：
+ * 
+ * - 格式化函數 → app-utils.js
+ * - 認證函數 → app-auth.js  
+ * - 數據函數 → app-data.js
+ * - 分析函數 → app-analysis.js
+ * - 持倉函數 → app-portfolio.js
+ * - 自選函數 → app-watchlist.js
+ * - 推薦函數 → app-recommend.js
+ * - 初始化 → app-init.js
+ * 
+ * 如需調試函數是否存在，可調用：
+ * window.__checkFunctions()
+ */
 
-// ===== 初始化與事件 =====
-searchBtn.onclick=analyze;
-tickerInput.onkeypress=e=>{if(e.key==='Enter')analyze()};
-$('chatSend').onclick=sendChat;
-$('chatInput').onkeypress=e=>{if(e.key==='Enter')sendChat()};
-document.querySelectorAll('.nav-item').forEach(btn=>{btn.onclick=()=>showPage(btn.dataset.page)});
-document.querySelectorAll('.chip').forEach(chip=>{chip.onclick=()=>{tickerInput.value=chip.dataset.ticker;analyze()}});
-const wlInput=$('wlTickerInput');
-if(wlInput)wlInput.onkeypress=e=>{if(e.key==='Enter')addToWatchlistDirect()};
-// Portfolio頁面進入時刷新
-const pfPage=$('portfolioPage');
-if(pfPage){const obs=new MutationObserver(()=>{if(pfPage.classList.contains('active'))renderPortfolio()});obs.observe(pfPage,{attributes:true,attributeFilter:['class']})}
-// 市場指數
-async function loadMarketIndices(){const bar=$('marketBar');if(!bar)return;try{const r=await fetch('api/market/indices');const d=await r.json();if(d.success&&d.indices){bar.innerHTML=d.indices.map(i=>{const up=i.change>=0;return '<div class="market-idx"><div class="market-idx-name">'+i.ticker+'</div><div class="market-idx-val" style="color:'+udC(i.change)+'">'+fmtP(i.price)+'</div><div class="market-idx-chg" style="color:'+udC(i.change)+'">'+(up?'▲':'▼')+' '+fmtPct(i.changePercent)+'</div></div>'}).join('')}}catch(e){}}
-loadMarketIndices();setInterval(loadMarketIndices,300000);
-// 價格提醒檢查
-function checkPriceAlerts(){if(!currentUser)return;const alerts=srvAlerts;if(!alerts.length)return;const tickers=[...new Set([...srvPortfolio.map(p=>p.ticker),...srvWatchlist.map(w=>w.ticker)])];if(!tickers.length)return;fetch('api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers})}).then(r=>r.json()).then(d=>{if(!d.success)return;const triggered=[];d.quotes?.forEach(q=>{if(!q.success)return;alerts.forEach(a=>{if(a.ticker!==q.ticker||a.triggered)return;if(a.type==='above'&&q.price>=a.price)triggered.push(a);if(a.type==='below'&&q.price<=a.price)triggered.push(a)})});if(triggered.length){triggered.forEach(a=>{showToast('🔔 '+a.ticker+' 已'+(a.type==='above'?'漲破':'跌至')+' '+fmtP(a.price)+'！');fetch('api/alerts/'+a.id,{method:'DELETE'}).catch(()=>{})});loadSrvData()}}).catch(()=>{})}
-setInterval(checkPriceAlerts,60000);setTimeout(checkPriceAlerts,10000);
-// 初始渲染
-renderHistory();
-// 啟動時檢查認證
-checkAuth();
-// ===== 推薦頁 =====
-let recommendData = null;
-let selectedTickers = new Set();
+// ===== 向後兼容（可選） =====
 
-// 攔截 showPage，新增推薦頁進入事件
-const originalShowPage = showPage;
-showPage = function(p) {
-    if (p === 'recommend') {
-        // 先動態檢查是否有 recommendPage
-        let el = $('recommendPage');
-        if (!el) {
-            // 動態創建推薦頁
-            el = document.createElement('main');
-            el.id = 'recommendPage';
-            el.className = 'main page';
-            el.innerHTML = `
-<div class="section-header" style="margin-bottom:16px"><h2 class="section-title">🎯 板塊推薦</h2></div>
-<div style="background:#E8F5E9;padding:14px;border-radius:12px;margin-bottom:16px;font-size:13px;color:#1B5E20;line-height:1.6">📊 按行業板塊精選的績優美股（基於常見板塊龍頭 + 市場公認優質標的），勾選後可單個或批量分析，以巴菲特/芒格策略篩選。</div>
-<div id="recommendActions" style="display:flex;gap:10px;margin-bottom:16px;display:none;flex-wrap:wrap">
-  <button class="action-btn secondary" onclick="analyzeSelected()">🎯 分析選中的</button>
-  <button class="action-btn primary" onclick="analyzeAll()">🤖 全部分析</button>
-  <button class="action-btn secondary" onclick="clearSelection()">🔄 清空選擇</button>
-</div>
-<div id="recommendList"></div>`;
-            document.body.appendChild(el);
-        }
-    }
-    originalShowPage(p);
-    if (p === 'recommend' && !recommendData) {
-        loadRecommend();
+// 為了保持向後兼容，我們在 window 上添加一些別名
+// 這些可以在未來版本中移除
+
+window.StockAI = {
+    version: '2.2.0',
+    modules: [
+        'app-config.js',
+        'app-utils.js',
+        'app-auth.js',
+        'app-data.js',
+        'app-analysis.js',
+        'app-portfolio.js',
+        'app-watchlist.js',
+        'app-recommend.js',
+        'app-init.js'
+    ],
+    
+    /**
+     * 檢查所有模組函數是否就緒
+     */
+    checkReady: function() {
+        return window.__checkFunctions ? window.__checkFunctions() : false;
+    },
+    
+    /**
+     * 獲取模組信息
+     */
+    getInfo: function() {
+        return {
+            version: this.version,
+            modules: this.modules,
+            currentUser: !!window.currentUser,
+            historyCount: window.history ? window.history.length : 0,
+            portfolioCount: window.gPF ? window.gPF().length : 0,
+            watchlistCount: window.gWL ? window.gWL().length : 0
+        };
     }
 };
 
-async function loadRecommend() {
-    const container = $('recommendList');
-    if (!container) return;
-    container.innerHTML = '<div class="loading show"><div class="spinner"></div><div class="loading-text">載入推薦列表...</div></div>';
-    try {
-        const r = await fetch('api/recommend');
-        const d = await r.json();
-        if (!d.success) throw new Error(d.error);
-        recommendData = d;
-        renderRecommend();
-    } catch(e) {
-        container.innerHTML = '<div class="empty"><div class="empty-icon">❌</div><div class="empty-text">載入失敗：'+e.message+'</div></div>';
-    }
-}
+// ===== 調試輔助 =====
 
-function renderRecommend() {
-    const container = $('recommendList');
-    const actions = $('recommendActions');
-    if (!container) return;
-    if (!recommendData || !recommendData.sectors) {
-        container.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">無推薦數據</div></div>';
-        return;
-    }
-    if (actions) actions.style.display = 'flex';
-    container.innerHTML = '';
-    Object.keys(recommendData.sectors).forEach(sector => {
-        const stocks = recommendData.sectors[sector];
-        const color = SCOLORS[sector] || '#9ca3af';
-        const div = document.createElement('div');
-        div.className = 'result-card';
-        div.style.marginBottom = '16px';
-        div.innerHTML = `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-  <div style="display:flex;align-items:center;gap:8px">
-    <span style="width:12px;height:12px;background:${color};border-radius:4px"></span>
-    <span style="font-weight:600;font-size:15px">${sector}</span>
-  </div>
-  <span style="font-size:12px;color:#6b7280">${stocks.length} 支</span>
-</div>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
-${stocks.map(s => `
-<div class="wl-card" style="margin-bottom:0;cursor:pointer;border:2px solid ${selectedTickers.has(s.ticker)?'var(--accent)':'var(--border)'};background:${selectedTickers.has(s.ticker)?'#E8F5E9':'#fff'}" onclick="toggleSelect('${s.ticker}')">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <input type="checkbox" ${selectedTickers.has(s.ticker)?'checked':''} style="cursor:pointer;width:18px;height:18px">
-        <span style="font-weight:600;font-size:15px">${s.ticker}</span>
-      </div>
-      <div style="font-size:12px;color:#6b7280;margin-top:2px">${s.name}</div>
-    </div>
-  </div>
-  <div style="font-size:11px;color:#6b7280;margin-top:8px">${s.reason}</div>
-  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-    <button class="action-btn" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation();quickAnalyze('${s.ticker}')">🎯 分析</button>
-    <button class="action-btn" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation();addToWatchlistDirectFromRecommend('${s.ticker}')">⭐ 加自選</button>
-  </div>
-</div>`).join('')}
-</div>`;
-        container.appendChild(div);
-    });
-}
+/**
+ * 打印調試信息到控制台
+ */
+window.__debug = function() {
+    console.log('StockAI Debug Info:', window.StockAI.getInfo());
+    
+    // 檢查關鍵變量
+    console.log('currentUser:', window.currentUser);
+    console.log('SECTOR_MAP:', typeof window.SECTOR_MAP);
+    console.log('showPage:', typeof window.showPage);
+    console.log('analyze:', typeof window.analyze);
+    console.log('renderPortfolio:', typeof window.renderPortfolio);
+    console.log('renderWatchlist:', typeof window.renderWatchlist);
+};
 
-function toggleSelect(ticker) {
-    if (selectedTickers.has(ticker)) {
-        selectedTickers.delete(ticker);
-    } else {
-        selectedTickers.add(ticker);
-    }
-    renderRecommend();
-}
-
-function clearSelection() {
-    selectedTickers.clear();
-    renderRecommend();
-}
-
-async function addToWatchlistDirectFromRecommend(ticker) {
-    if (currentUser) {
-        await fetch('api/watchlist/add', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker}) });
-        await loadSrvData();
-    } else {
-        if (!offWatchlist.includes(ticker)) {
-            offWatchlist.push(ticker);
-            saveLS('stock_watchlist', offWatchlist);
-        }
-    }
-    showToast('✅ 已添加 '+ticker+' 到自選');
-}
-
-async function analyzeSelected() {
-    const tickers = Array.from(selectedTickers);
-    if (!tickers.length) {
-        showToast('請先選擇要分析的股票');
-        return;
-    }
-    await doBatchAnalysis(tickers);
-}
-
-async function analyzeAll() {
-    if (!recommendData || !recommendData.sectors) return;
-    let allTickers = [];
-    Object.values(recommendData.sectors).forEach(stocks => {
-        stocks.forEach(s => allTickers.push(s.ticker));
-    });
-    await doBatchAnalysis(allTickers);
-}
-
-async function doBatchAnalysis(tickers) {
-    if (!tickers.length) return;
-    let bar = $('progressBar');
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'progressBar';
-        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(90deg,#00C853,#4ADE80);padding:12px;color:#fff;font-size:14px;text-align:center';
-        document.body.appendChild(bar);
-    }
-    bar.style.display = 'block';
-    let results = [];
-    let count = 0;
-    for (const t of tickers) {
-        try {
-            bar.innerHTML = `分析 ${t}... (${count+1}/${tickers.length}) <div style="background:rgba(255,255,255,.3);border-radius:4px;height:6px;margin-top:8px"><div style="background:#fff;height:6px;border-radius:4px;width:${Math.round(count/tickers.length*100)}%;transition:width .3s"></div></div>`;
-            const r = await fetch('api/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker:t, type:'overview'}) });
-            const d = await r.json();
-            if (d.success) {
-                results.push({
-                    ticker: t,
-                    content: d.content,
-                    time: Date.now()
-                });
-            }
-        } catch(e) {
-            console.error('Analysis failed for', t, e);
-        }
-        count++;
-        bar.innerHTML = `分析中... (${count}/${tickers.length}) <div style="background:rgba(255,255,255,.3);border-radius:4px;height:6px;margin-top:8px"><div style="background:#fff;height:6px;border-radius:4px;width:${Math.round(count/tickers.length*100)}%;transition:width .3s"></div></div>`;
-    }
-    setTimeout(() => { if (bar) bar.style.display='none' }, 500);
-    showModal(`
-<div class="modal-title">🤖 批量分析完成</div>
-<div style="font-size:14px;color:#6b7280;margin-bottom:12px">完成 ${results.length}/${tickers.length} 支股票分析</div>
-<div style="max-height:50vh;overflow:auto;margin-bottom:16px">
-${results.map(r => `
-<div class="result-card" style="margin-bottom:10px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <span style="font-weight:600;font-size:15px">🎯 ${r.ticker}</span>
-    <button class="wl-btn analyze" onclick="saveAndGo('${r.ticker}')">查看詳細</button>
-  </div>
-  <div style="font-size:12px;color:#6b7280;line-height:1.8">${r.content.substring(0,300)}...</div>
-</div>
-`).join('')}
-</div>
-<div class="modal-btn-row">
-  <button class="modal-btn cancel" onclick="closeModal()">關閉</button>
-</div>
-<script>
-window.saveAndGo = function(t) {
-    sessionStorage.setItem('pendingTicker', t);
-    closeModal();
-    window.location.hash = 'home';
-    setTimeout(() => {
-        const saved = sessionStorage.getItem('pendingTicker');
-        if (saved) {
-            sessionStorage.removeItem('pendingTicker');
-            tickerInput.value = saved;
-            analyze();
-        }
+// 自動觸發
+if (typeof console !== 'undefined') {
+    setTimeout(function() {
+        console.log('StockAI loaded. Run window.__debug() for info.');
     }, 100);
 }
-</script>`);
-}
-
-// 初始化：動態在底部導航中加入推薦按鈕
-document.addEventListener('DOMContentLoaded', function() {
-    // 從後端同步版本號到頁面頂部 .version-tag
-    (async () => {
-        try {
-            const r = await fetch('api/version');
-            const d = await r.json();
-            if (d && d.success && d.version) {
-                const tag = document.getElementById('appVersionTag');
-                if (tag) {
-                    tag.textContent = 'v' + d.version;
-                    tag.title = (d.name || 'Stock AI') + ' v' + d.version;
-                }
-            }
-        } catch (e) { /* 靜默：保留 HTML 內預設版本號 */ }
-    })();
-    // 檢查是否有 recommendPage，沒有就創建
-    if (!$('recommendPage')) {
-        const el = document.createElement('main');
-        el.id = 'recommendPage';
-        el.className = 'main page';
-        el.innerHTML = `
-<div class="section-header" style="margin-bottom:16px"><h2 class="section-title">🎯 板塊推薦</h2></div>
-<div style="background:#E8F5E9;padding:14px;border-radius:12px;margin-bottom:16px;font-size:13px;color:#1B5E20;line-height:1.6">
-  📊 按行業板塊精選的績優美股（基於常見板塊龍頭 + 市場公認優質標的），勾選後可單個或批量分析，以巴菲特/芒格策略篩選。
-</div>
-<div id="recommendActions" style="display:flex;gap:10px;margin-bottom:16px;display:none;flex-wrap:wrap">
-  <button class="action-btn secondary" onclick="analyzeSelected()">🎯 分析選中的</button>
-  <button class="action-btn primary" onclick="analyzeAll()">🤖 全部分析</button>
-  <button class="action-btn secondary" onclick="clearSelection()">🔄 清空選擇</button>
-</div>
-<div id="recommendList"></div>`;
-        document.body.appendChild(el);
-    }
-    // 動態修改底部導航，加入推薦
-    const bottomNav = document.querySelector('.bottom-nav');
-    if (bottomNav && !bottomNav.innerHTML.includes('data-page="recommend"')) {
-        bottomNav.innerHTML = `
-  <button class="nav-item active" data-page="home"><span class="icon">🏠</span>首頁</button>
-  <button class="nav-item" data-page="recommend"><span class="icon">🎯</span>推薦</button>
-  <button class="nav-item" data-page="chat"><span class="icon">💬</span>提問</button>
-  <button class="nav-item" data-page="watchlist"><span class="icon">⭐</span>自選</button>
-  <button class="nav-item" data-page="portfolio"><span class="icon">💼</span>持倉</button>`;
-    }
-});

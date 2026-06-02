@@ -1,11 +1,15 @@
 {
   "name": "stockadvisor",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "description": "個人美股 AI 投顧助手",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node test-fix.js",
+    "build-enhanced": "./build-enhanced.sh",
+    "monitor": "./monitor.sh",
+    "watchdog": "./watchdog.sh"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
