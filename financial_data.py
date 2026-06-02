@@ -263,31 +263,67 @@ def get_financial_metrics(ticker, apikey='demo'):
 
 
 def estimate_intrinsic_value(ticker, current_price, financial_metrics=None):
-    """簡化的內在價值估算（基於 DCF 或盈餘折現）"""
+    """內在價值估算（基於 DCF / 盈餘折現）
+    
+    修復：安全邊際計算方向
+    - 當現價 < IV → 有安全邊際（值得買入）
+    - 當現價 > IV → 溢價（建議觀望或減持）
+    """
     if not financial_metrics:
         financial_metrics = get_financial_metrics(ticker)
         if not financial_metrics.get('success'):
             return {'error': '無法估算內在價值'}
-    
+
     metrics = financial_metrics.get('metrics', {})
-    roe = metrics.get('roe', 15)
-    
-    # 簡化版：基於 ROE 與合理市盈率
-    # 合理 P/E 約等於 ROE (百分比)
-    # 內在價值 = 當前淨資產 × (1+ROE)^5 的簡單估算
-    
-    # 更簡單：基於當前價格與安全邊際計算
-    # 這裡僅作為範例，真實世界需要更複雜的模型
-    iv_lower = current_price * 0.7  # 安全邊際 30%
-    iv_upper = current_price * 1.15  # 合理區間
-    
+    roe = metrics.get('roe', 15) / 100  # 轉為小數
+
+    # 基於 ROE 的合理市盈率估算
+    # 格雷厄姆公式：合理 P/E ≈ ROE × 100 / 增長率假設
+    # 簡化：合理 P/E ≈ ROE（百分比），但限制在 8-30 倍
+    if roe > 0:
+        reasonable_pe = min(max(roe * 100 * 1.0, 8), 30)
+    else:
+        reasonable_pe = 15  # 默認 15 倍
+
+    # 估算每股收益（若有淨利潤數據）
+    net_income = metrics.get('netIncome', 0)
+    equity = metrics.get('shareholderEquity', 1)
+    if equity > 0:
+        eps_estimate = net_income / equity  # 簡化估算
+    else:
+        eps_estimate = current_price * roe / 100  # backup
+
+    # DCF 簡化版：IV = EPS × 合理 P/E × 安全係數
+    intrinsic_value = eps_estimate * reasonable_pe if eps_estimate > 0 else current_price * 1.0
+
+    # 安全邊際計算
+    # 安全邊際 = (IV - 現價) / IV × 100%
+    # > 30% = 理想買入點，10-30% = 合理價位，< 10% = 溢價
+    if intrinsic_value > 0:
+        margin_of_safety = (intrinsic_value - current_price) / intrinsic_value * 100
+    else:
+        margin_of_safety = 0
+
+    # 評級
+    if margin_of_safety >= 30:
+        rating = '理想買入區間'
+    elif margin_of_safety >= 10:
+        rating = '合理價位'
+    elif margin_of_safety >= 0:
+        rating = '輕微溢價'
+    else:
+        rating = '高估'
+
     return {
         'currentPrice': current_price,
-        'intrinsicValueLower': round(iv_lower, 2),
-        'intrinsicValueUpper': round(iv_upper, 2),
-        'intrinsicValueMid': round((iv_lower + iv_upper) / 2, 2),
-        'method': 'Simplified Margin of Safety',
-        'note': '建議使用完整 DCF 模型進行精準估算'
+        'intrinsicValueLower': round(intrinsic_value * 0.85, 2),  # 下限（悲觀）
+        'intrinsicValueUpper': round(intrinsic_value * 1.15, 2),  # 上限（樂觀）
+        'intrinsicValueMid': round(intrinsic_value, 2),
+        'reasonablePE': round(reasonable_pe, 1),
+        'marginOfSafety': round(margin_of_safety, 1),  # 正數=低估，負數=高估
+        'safetyRating': rating,
+        'method': 'Simplified DCF + ROE-based P/E',
+        'note': f'安全邊際 {margin_of_safety:.1f}%：{rating}'
     }
 
 

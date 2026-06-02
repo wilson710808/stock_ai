@@ -10,7 +10,7 @@ const CORS_ORIGINS = process.env.CORS_ORIGINS || '';
 const path = require('path');
 const { spawn } = require('child_process');
 const { db, stmts } = require('./db');
-const { hashPassword, verifyPassword, signJWT, verifyJWT, authMiddleware, JWT_EXPIRY } = require('./auth');
+const { hashPassword, verifyPassword, signJWT, verifyJWT, authMiddleware, JWT_EXPIRY, checkRateLimit } = require('./auth');
 
 // 行業分類映射
 const SECTOR_MAP = {
@@ -109,13 +109,17 @@ app.get('/api/moat/:ticker', async (req, res) => {
  * Gateway 負責 API Key 池化、速率限制、負載均衡
  */
 async function gatewayChat(messages, userId = 'Wilson', retries = 1) {
-  // Gateway 需要 query_data 作為主輸入，messages 提供上下文
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   const queryData = lastUserMsg ? lastUserMsg.content : '';
+  let lastError = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      console.log(`[Gateway] 重試 ${attempt}/${retries}，等待 1 秒...`);
+      await new Promise(r => setTimeout(r, 1000));
+    }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 40000); // 40s
+    const timeout = setTimeout(() => controller.abort(), 40000);
 
     try {
       const response = await fetch(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
@@ -133,37 +137,32 @@ async function gatewayChat(messages, userId = 'Wilson', retries = 1) {
 
       if (!response.ok) {
         const errText = await response.text();
-        // 如果是 500 (Gateway timeout)，重試
-        if (response.status === 500 && attempt < retries) {
-          console.log(`[Gateway] 重試 ${attempt + 1}/${retries}...`);
-          await new Promise(r => setTimeout(r, 1000));
-          continue;
+        if (response.status === 500) {
+          lastError = new Error(`Gateway HTTP 500`);
+          if (attempt < retries) continue;
+          throw lastError;
         }
         throw new Error(`Gateway HTTP ${response.status}: ${errText.substring(0, 200)}`);
       }
 
       const data = await response.json();
       if (!data.success) {
-        if (attempt < retries) {
-          console.log(`[Gateway] 回覆失敗，重試 ${attempt + 1}/${retries}...`);
-          await new Promise(r => setTimeout(r, 1000));
-          continue;
-        }
-        throw new Error(data.error || 'Gateway 回覆失敗');
+        lastError = new Error(data.error || 'Gateway 回覆失敗');
+        if (attempt < retries) continue;
+        throw lastError;
       }
       return data.response;
     } catch (err) {
       clearTimeout(timeout);
-      if (attempt < retries && (err.name === 'AbortError' || err.message.includes('aborted'))) {
-        console.log(`[Gateway] 超時，重試 ${attempt + 1}/${retries}...`);
-        await new Promise(r => setTimeout(r, 1000));
-        continue;
+      lastError = err;
+      if (err.name === 'AbortError' || err.message.includes('aborted')) {
+        if (attempt < retries) continue;
+      } else if (attempt >= retries) {
+        throw err;
       }
-      if (attempt === retries) throw err;
-    } finally {
-      clearTimeout(timeout);
     }
   }
+  throw lastError || new Error('Gateway 請求失敗');
 }
 
 // 配置
@@ -278,10 +277,38 @@ app.get('/api/version', (req, res) => {
   res.json({ success: true, version: APP_VERSION, name: 'Stock AI' });
 });
 
+// ===== 用戶上下文 API（缺失的端點，app.js 依賴此 API）=====
+app.get('/api/user-context', (req, res) => {
+  if (!req.user) {
+    return res.json({ success: true, hasPortfolio: false, hasWatchlist: false, context: '' });
+  }
+  try {
+    const pf = stmts.getPortfolio.all(req.user.userId);
+    const wl = stmts.getWatchlist.all(req.user.userId);
+    const hasPortfolio = pf.length > 0;
+    const hasWatchlist = wl.length > 0;
+    const parts = [];
+    if (hasPortfolio) parts.push(`持倉 ${pf.length} 支股票`);
+    if (hasWatchlist) parts.push(`自選 ${wl.length} 支股票`);
+    const context = parts.length ? `用戶目前有：${parts.join('、')}。` : '用戶目前沒有持倉和自選股。';
+    res.json({ success: true, hasPortfolio, hasWatchlist, portfolioCount: pf.length, watchlistCount: wl.length, context });
+  } catch (e) {
+    res.json({ success: false, error: e.message, hasPortfolio: false, hasWatchlist: false, context: '' });
+  }
+});
+
 // ===== 認證 API =====
 
 // 註冊
 app.post('/api/auth/register', (req, res) => {
+  const ip = (req.ip || req.connection?.remoteAddress || '').replace('::ffff:', '');
+  const rate = checkRateLimit(ip, 'register');
+  if (!rate.allowed) {
+    return res.status(429).json({
+      error: `註冊次數過多，請 ${rate.waitSeconds} 秒後再試`,
+      retryAfter: rate.waitSeconds
+    });
+  }
   try {
     const { username, email, password, display_name } = req.body;
     if (!username || !password) return res.status(400).json({ error: '用戶名和密碼為必填' });
@@ -309,23 +336,30 @@ app.post('/api/auth/register', (req, res) => {
 
 // 登錄
 app.post('/api/auth/login', (req, res) => {
+  const ip = (req.ip || req.connection?.remoteAddress || '').replace('::ffff:', '');
+  const rate = checkRateLimit(ip, 'login');
+  if (!rate.allowed) {
+    return res.status(429).json({
+      error: `登入次數過多，請 ${rate.waitSeconds} 秒後再試`,
+      retryAfter: rate.waitSeconds
+    });
+  }
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: '請輸入用戶名和密碼' });
     const user = stmts.getUserByUsername.get(username) || (username.includes('@') ? stmts.getUserByEmail.get(username) : null);
     if (!user || !verifyPassword(password, user.password_hash)) {
-      // 僅在用戶存在時寫日誌，避免 user_id=0 觸發外鍵約束
       if (user?.id) {
-        try { stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 0); } catch(e) { console.warn('insertLoginLog(fail) skipped:', e.message); }
+        try { stmts.insertLoginLog.run(user.id, ip, req.headers['user-agent'] || '', 0); } catch(e) {}
       }
       return res.status(401).json({ error: '用戶名或密碼錯誤' });
     }
-    try { stmts.updateUserLogin.run(user.id); } catch(e) { console.warn('updateUserLogin skipped:', e.message); }
-    try { stmts.insertLoginLog.run(user.id, req.ip || '', req.headers['user-agent'] || '', 1); } catch(e) { console.warn('insertLoginLog(success) skipped:', e.message); }
+    try { stmts.updateUserLogin.run(user.id); } catch(e) {}
+    try { stmts.insertLoginLog.run(user.id, ip, req.headers['user-agent'] || '', 1); } catch(e) {}
     const token = signJWT({ userId: user.id, username: user.username, role: user.role });
     res.cookie('token', token, {
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: JWT_EXPIRY,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
     });

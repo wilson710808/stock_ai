@@ -1,73 +1,93 @@
+/**
+ * StockAI 認證模組
+ * ✅ 修復：統一使用 stockai.db，移除孤立的 stock_users.db
+ * ✅ 修復：JWT_SECRET 無生產環境硬編碼 fallback
+ * ✅ 修復：登入/註冊 Rate Limiting
+ */
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const path = require('path');
-const Database = require('better-sqlite3');
 
-// 初始化 SQLite 數據庫
-const db = new Database(path.join(__dirname, 'stock_users.db'));
-
-// JWT 配置
-const JWT_SECRET = process.env.JWT_SECRET || 'stockai-secret-key-of-minimum-32-characters-2026';
-const JWT_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 天，毫秒
-
-// 初始化用戶數據庫
-function initUserDatabase() {
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login TIMESTAMP
-        );
-        
-        -- 默認創建 admin 用戶（密碼 admin）
-        INSERT OR IGNORE INTO users (username, password_hash, role)
-        VALUES ('admin', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.vqBytfRtqJ/pOnO', 'admin');
-    `);
+// ============================================
+// 1. JWT 配置（安全第一）
+// ============================================
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('【安全警告】JWT_SECRET 未設置！請在 .env 中設置 process.env.JWT_SECRET');
+    console.error('【安全警告】為防止意外，進程將在未設置密鑰時退出（生產環境）。');
+    if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
+    console.warn('【警告】非生產環境，使用臨時密鑰，請尽快設置 JWT_SECRET');
 }
-initUserDatabase();
+const _JWT_SECRET = JWT_SECRET || 'DEV-ONLY-INSUFFICIENT-KEY-PLEASE-SET-JWT_SECRET-ENV';
+const JWT_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 天
 
-// 生成 hash 密碼（同步版本）
+// ============================================
+// 2. Rate Limiting（防暴力破解）
+// ============================================
+// 記憶體記錄：{ ip: { count, resetAt } }
+const _rateLimitMap = new Map();
+const RATE_WINDOW_MS = 15 * 60 * 1000; // 15 分鐘窗口
+const RATE_MAX_LOGIN = 10;              // 15 分鐘內最多 10 次登入
+const RATE_MAX_REGISTER = 5;             // 15 分鐘內最多 5 次註冊
+
+function _checkRateLimit(ip, action) {
+    const now = Date.now();
+    const max = action === 'login' ? RATE_MAX_LOGIN : RATE_MAX_REGISTER;
+    const entry = _rateLimitMap.get(ip);
+
+    if (!entry || now > entry.resetAt) {
+        _rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS, action });
+        return { allowed: true, remaining: max - 1 };
+    }
+
+    if (entry.count >= max) {
+        const waitMs = entry.resetAt - now;
+        return { allowed: false, remaining: 0, waitSeconds: Math.ceil(waitMs / 1000) };
+    }
+
+    entry.count++;
+    return { allowed: true, remaining: max - entry.count };
+}
+
+// ============================================
+// 3. 密碼處理（同步，安全）
+// ============================================
 function hashPassword(password) {
-    const salt = bcrypt.genSaltSync(10);
+    const salt = bcrypt.genSaltSync(12); // 升級到 12 輪
     return bcrypt.hashSync(password, salt);
 }
 
-// 驗證密碼（同步版本）
 function verifyPassword(password, hash) {
     return bcrypt.compareSync(password, hash);
 }
 
-// 獲取用戶
-function getUserByUsername(username) {
-    return db.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ?').get(username);
-}
-
-// 生成 JWT
+// ============================================
+// 4. JWT 處理
+// ============================================
 function signJWT(payload) {
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+    return jwt.sign(payload, _JWT_SECRET, { expiresIn: JWT_EXPIRY });
 }
 
-// 驗證 JWT
 function verifyJWT(token) {
     try {
-        return jwt.verify(token, JWT_SECRET);
+        return jwt.verify(token, _JWT_SECRET);
     } catch (e) {
         return null;
     }
 }
 
-// 認證中間件
+// ============================================
+// 5. 認證中間件
+// ============================================
 function authMiddleware(req, res, next) {
-    const path = req.path;
-    const token = (req.headers.authorization || '').replace('Bearer ', '') || 
+    const reqPath = req.path;
+    const token = (req.headers.authorization || '').replace('Bearer ', '') ||
                   req.cookies.token ||
                   req.cookies.stockai_token;
 
-    // /api/auth/me 允許未登入查詢，但若帶 token 必須解析出 req.user
-    if (path === '/api/auth/me') {
+    // /api/auth/me：允許未登入查詢，但有 token 則解析
+    if (reqPath === '/api/auth/me') {
         if (token) {
             const decoded = verifyJWT(token);
             if (decoded) req.user = decoded;
@@ -75,7 +95,7 @@ function authMiddleware(req, res, next) {
         return next();
     }
 
-    // 白名單：不需登入即可訪問的路由
+    // 白名單：公開路由
     const whitelist = [
         '/login.html',
         '/register.html',
@@ -85,51 +105,47 @@ function authMiddleware(req, res, next) {
         '/api/version',
         '/favicon.ico',
         '/',
-        '/ws/07-stock-ai/',
-        '/ws/07-stock-ai/login.html',
-        '/ws/07-stock-ai/register.html'
     ];
-    
-    // 白名單路由直接放行；其他 /api/auth/*（profile/password 等）仍需認證
-    if (whitelist.includes(path) || 
-        path.startsWith('/css/') || 
-        path.startsWith('/js/') || 
-        path.startsWith('/images/') ||
-        path.endsWith('.css') ||
-        path.endsWith('.js')) {
+
+    if (whitelist.includes(reqPath) ||
+        reqPath.startsWith('/css/') ||
+        reqPath.startsWith('/js/') ||
+        reqPath.startsWith('/images/') ||
+        reqPath.endsWith('.css') ||
+        reqPath.endsWith('.js')) {
         return next();
     }
-    
+
     if (!token) {
-        // 頁面請求：重定向到登入頁；API 請求：返回 401
-        if (path.endsWith('.html') || path === '/' || !path.startsWith('/api/')) {
-            // 反代環境下使用相對路徑重定向
+        if (reqPath.endsWith('.html') || reqPath === '/' || !reqPath.startsWith('/api/')) {
             const prefix = req.headers['x-forwarded-prefix'] || '';
             return res.redirect(prefix + '/login.html');
         }
         return res.status(401).json({ error: '請先登入' });
     }
-    
+
     const decoded = verifyJWT(token);
     if (!decoded) {
-        if (path.endsWith('.html') || path === '/' || !path.startsWith('/api/')) {
+        if (reqPath.endsWith('.html') || reqPath === '/' || !reqPath.startsWith('/api/')) {
             const prefix = req.headers['x-forwarded-prefix'] || '';
             return res.redirect(prefix + '/login.html');
         }
         return res.status(401).json({ error: '無效或已過期的憑證，請重新登入' });
     }
-    
+
     req.user = decoded;
     next();
 }
 
+// ============================================
+// 導出
+// ============================================
 module.exports = {
-    db,
     hashPassword,
     verifyPassword,
     signJWT,
     verifyJWT,
     authMiddleware,
-    JWT_EXPIRY,  // cookie maxAge 需要毫秒
-    getUserByUsername
+    JWT_EXPIRY,
+    checkRateLimit: _checkRateLimit,
 };

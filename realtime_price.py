@@ -124,21 +124,48 @@ def get_kline_yahoo(ticker, days=90):
 # ============================================
 # 常見股票名稱映射（Stooq 不返回公司名稱，用此表補全）
 _TICKER_NAMES = {
+    # 科技
     "AAPL": "Apple Inc.", "NVDA": "NVIDIA Corporation", "MSFT": "Microsoft Corporation",
-    "TSLA": "Tesla Inc.", "META": "Meta Platforms Inc.", "GOOGL": "Alphabet Inc.",
-    "AMZN": "Amazon.com Inc.", "GOOG": "Alphabet Inc. (Class C)", "BRK.B": "Berkshire Hathaway",
-    "JPM": "JPMorgan Chase & Co.", "V": "Visa Inc.", "UNH": "UnitedHealth Group",
-    "JNJ": "Johnson & Johnson", "WMT": "Walmart Inc.", "XOM": "Exxon Mobil Corporation",
-    "MA": "Mastercard Inc.", "PG": "Procter & Gamble", "HD": "The Home Depot",
-    "CVX": "Chevron Corporation", "MRK": "Merck & Co.", "ABBV": "AbbVie Inc.",
-    "KO": "Coca-Cola Company", "PEP": "PepsiCo Inc.", "COST": "Costco Wholesale",
-    "AVGO": "Broadcom Inc.", "ADBE": "Adobe Inc.", "CRM": "Salesforce Inc.",
-    "AMD": "Advanced Micro Devices", "NFLX": "Netflix Inc.", "INTC": "Intel Corporation",
-    "CSCO": "Cisco Systems", "DIS": "The Walt Disney Company", "BA": "Boeing Company",
-    "PYPL": "PayPal Holdings", "SBUX": "Starbucks Corporation", "NKE": "Nike Inc.",
+    "GOOGL": "Alphabet Inc.", "GOOG": "Alphabet Inc. (Class C)", "AMZN": "Amazon.com Inc.",
+    "META": "Meta Platforms Inc.", "TSLA": "Tesla Inc.", "AMD": "Advanced Micro Devices",
+    "INTC": "Intel Corporation", "CRM": "Salesforce Inc.", "ADBE": "Adobe Inc.",
+    "NFLX": "Netflix Inc.", "PYPL": "PayPal Holdings", "AVGO": "Broadcom Inc.",
+    "ORCL": "Oracle Corporation", "IBM": "IBM Corporation", "CSCO": "Cisco Systems",
+    "QCOM": "QUALCOMM Inc.", "TXN": "Texas Instruments", "NOW": "ServiceNow Inc.",
+    "SNOW": "Snowflake Inc.", "PLTR": "Palantir Technologies",
+    # 消費
+    "WMT": "Walmart Inc.", "COST": "Costco Wholesale", "HD": "The Home Depot",
+    "NKE": "Nike Inc.", "MCD": "McDonald's Corporation", "SBUX": "Starbucks Corporation",
+    "TGT": "Target Corporation", "LOW": "Lowe's Companies", "DIS": "The Walt Disney Company",
+    "GM": "General Motors Company", "F": "Ford Motor Company",
+    # 金融
+    "JPM": "JPMorgan Chase & Co.", "V": "Visa Inc.", "MA": "Mastercard Inc.",
+    "BRK.B": "Berkshire Hathaway", "GS": "Goldman Sachs", "MS": "Morgan Stanley",
+    "BAC": "Bank of America", "WFC": "Wells Fargo", "AXP": "American Express",
+    "BLK": "BlackRock Inc.", "C": "Citigroup Inc.",
+    # 醫療
+    "UNH": "UnitedHealth Group", "JNJ": "Johnson & Johnson", "LLY": "Eli Lilly and Company",
+    "PFE": "Pfizer Inc.", "ABBV": "AbbVie Inc.", "MRK": "Merck & Co.",
+    "TMO": "Thermo Fisher Scientific", "ABT": "Abbott Laboratories", "AMGN": "Amgen Inc.",
+    # 能源
+    "XOM": "Exxon Mobil Corporation", "CVX": "Chevron Corporation",
+    "COP": "ConocoPhillips", "SLB": "Schlumberger Limited",
+    # 工業
+    "CAT": "Caterpillar Inc.", "BA": "Boeing Company", "HON": "Honeywell International",
+    "GE": "General Electric", "UPS": "United Parcel Service", "MMM": "3M Company",
+    "RTX": "RTX Corporation", "LMT": "Lockheed Martin",
+    # 材料/地產/公用
+    "LIN": "Linde plc", "APD": "Air Products & Chemicals", "SHW": "Sherwin-Williams",
+    "PLD": "Prologis Inc.", "AMT": "American Tower", "EQIX": "Equinix Inc.",
+    "NEE": "NextEra Energy", "DUK": "Duke Energy", "SO": "Southern Company",
+    # 指數 ETF
     "SPY": "SPDR S&P 500 ETF", "QQQ": "Invesco QQQ Trust", "DIA": "SPDR Dow Jones ETF",
+    "VTI": "Vanguard Total Stock Market ETF", "IWM": "iShares Russell 2000 ETF",
     "VIX": "CBOE Volatility Index",
-    "ARM": "ARM Holdings plc", "CI": "Cigna Group", "EPAM": "EPAM Systems", "GPRO": "GoPro Inc.",
+    # 其他知名股票
+    "ARM": "ARM Holdings plc", "CI": "Cigna Group", "EPAM": "EPAM Systems",
+    "GPRO": "GoPro Inc.", "SNAP": "Snap Inc.", "UBER": "Uber Technologies",
+    "COIN": "Coinbase Global", "RIVN": "Rivian Automotive",
 }
 
 def get_quote_stooq(ticker):
@@ -257,9 +284,15 @@ def get_kline_twelvedata(ticker, days=90, apikey='demo'):
 import os as _os
 import tempfile as _tempfile
 
-# 磁盤緩存目錄（避免重複請求）
-_CACHE_DIR = _os.path.join(_tempfile.gettempdir(), 'stockai_kline_cache')
-_os.makedirs(_CACHE_DIR, exist_ok=True)
+# 磁盤緩存目錄（修復：使用項目本地目錄而非系統 temp）
+# 系統 temp 目錄在重啟後會被清空，改為項目本地緩存
+_CACHE_DIR = _os.path.join(_os.path.dirname(__file__), '.kline_cache')
+try:
+    _os.makedirs(_CACHE_DIR, exist_ok=True)
+except Exception:
+    # fallback 到系統 temp
+    _CACHE_DIR = _os.path.join(_tempfile.gettempdir(), 'stockai_kline_cache')
+    _os.makedirs(_CACHE_DIR, exist_ok=True)
 
 def _cache_path(ticker, days):
     return _os.path.join(_CACHE_DIR, f'{ticker}_{days}d.json')
@@ -335,9 +368,14 @@ def get_kline_eodhd(ticker, days=90):
 # ============================================
 
 def get_simulated_data(ticker):
-    """使用統一中央價格庫（stock_prices.json），確保所有價格一致且正確"""
+    """使用統一中央價格庫（stock_prices.json），確保所有價格一致且正確
+    
+    修復：當所有 API 均不可用時，使用 stock_prices.json 中的固定價格，
+    避免 random 導致每次請求結果不同（價格漂移問題）
+    """
     import os
     ticker = ticker.upper()
+    ticker = ticker.replace('.', '-')  # 統一格式（BRK.B → BRK-B）
     
     # 優先從 stock_prices.json 讀取（中央價格庫）
     price_file = os.path.join(os.path.dirname(__file__), 'stock_prices.json')
@@ -345,46 +383,59 @@ def get_simulated_data(ticker):
         with open(price_file, 'r', encoding='utf-8') as f:
             PRICE_DB = json.load(f)
     except:
-        # 如果檔案不存在，使用內建預設值
         PRICE_DB = {}
     
+    # 嘗試精確匹配
     if ticker in PRICE_DB:
         data = PRICE_DB[ticker]
-        return {
-            'success': True,
-            'ticker': ticker,
-            'name': data.get('name', ticker),
-            'price': data.get('price', 0),
-            'change': data.get('change', 0),
-            'changePercent': data.get('changePercent', 0),
-            'prevClose': data.get('prevClose', data.get('price', 0)),
-            'open': data.get('open', data.get('price', 0)),
-            'high': data.get('high', data.get('price', 0)),
-            'low': data.get('low', data.get('price', 0)),
-            'volume': data.get('volume', 0),
-            'timestamp': int(datetime.now().timestamp() * 1000),
-            'source': 'central_db',
-            'note': '正確收盤價'
-        }
+        return _build_quote_response(ticker, data)
     
-    # 默認數據（未知股票）
-    import random
-    base_price = 200.0
+    # 嘗試備用格式
+    alt_ticker = ticker.replace('-', '.')
+    if alt_ticker in PRICE_DB:
+        data = PRICE_DB[alt_ticker]
+        return _build_quote_response(ticker, data)
+    
+    # 未知股票：返回一個基於股票代碼哈希的固定值，避免每次 random 不同
+    # 修復：使用股票代碼的字元哈希作為 seed，避免每次調用 random 值不同
+    ticker_hash = hash(ticker) % 1000  # 0-999 的固定哈希
+    base_price = 50.0 + (ticker_hash / 1000.0) * 300.0  # 50-350 範圍內的固定值
     return {
         'success': True,
         'ticker': ticker,
-        'name': ticker,
-        'price': round(base_price + random.uniform(-20, 20), 2),
-        'change': round(random.uniform(-5, 5), 2),
-        'changePercent': round(random.uniform(-2, 2), 2),
-        'prevClose': round(base_price + random.uniform(-5, 5), 2),
-        'open': round(base_price + random.uniform(-3, 3), 2),
-        'high': round(base_price + random.uniform(5, 15), 2),
-        'low': round(base_price + random.uniform(-15, -5), 2),
-        'volume': random.randint(10000000, 100000000),
+        'name': _TICKER_NAMES.get(ticker, ticker),
+        'price': round(base_price, 2),
+        'change': 0.0,
+        'changePercent': 0.0,
+        'prevClose': round(base_price, 2),
+        'open': round(base_price, 2),
+        'high': round(base_price * 1.02, 2),
+        'low': round(base_price * 0.98, 2),
+        'volume': 5000000 + ticker_hash * 10000,
         'timestamp': int(datetime.now().timestamp() * 1000),
-        'source': 'simulated',
-        'note': '⚠️ 模擬數據（API 均不可用）'
+        'source': 'simulated_fallback',
+        'note': f'⚠️ API 均不可用，使用哈希固定值（${base_price:.2f}）'
+    }
+
+
+def _build_quote_response(ticker, data):
+    """統一構造報價回應格式"""
+    price = data.get('price', 0)
+    return {
+        'success': True,
+        'ticker': ticker,
+        'name': data.get('name', ticker),
+        'price': data.get('price', 0),
+        'change': data.get('change', 0),
+        'changePercent': data.get('changePercent', 0),
+        'prevClose': data.get('prevClose', data.get('price', 0)),
+        'open': data.get('open', data.get('price', 0)),
+        'high': data.get('high', data.get('price', 0)),
+        'low': data.get('low', data.get('price', 0)),
+        'volume': data.get('volume', 0),
+        'timestamp': int(datetime.now().timestamp() * 1000),
+        'source': 'central_db',
+        'note': '從 stock_prices.json 中央價格庫讀取'
     }
 
 
