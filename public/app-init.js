@@ -466,4 +466,41 @@
         return missing.length === 0;
     };
     
+    // ===== v2.2.2: 搜尋成功後自動收藏 =====
+    
+    // 自動收藏開關（預設開，可由用戶關閉）
+    window.autoFavoriteEnabled = function() {
+        var v = localStorage.getItem('stock_auto_favorite');
+        return v === null || v === '1';
+    };
+    
+    // 靜默自動收藏當前分析（不彈 modal、不重覆同 ticker+type 同一天）
+    window.autoFavoriteCurrent = async function(ticker, type, content) {
+        // 去重：同一 ticker+type 同一天只收藏一次
+        var key = 'auto_fav_' + ticker + '_' + type + '_' + (new Date().toISOString().slice(0,10));
+        if (sessionStorage.getItem(key)) return;
+        
+        try {
+            var resp = await fetch('api/favorites/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    analysis_id: window.lastAnalysisId || null,
+                    ticker: ticker,
+                    type: type,
+                    content: content,
+                    note: 'auto-collected'
+                })
+            });
+            var d = await resp.json();
+            if (d.success) {
+                sessionStorage.setItem(key, '1');
+                // 不自動打開收藏頁，避免干擾
+                // 不跳額外 toast（保留原「分析完成！」
+            }
+        } catch(e) {
+            // 自動收藏失敗靜處理，不干擾使用者
+        }
+    };
+    
 })();

@@ -152,6 +152,11 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ticker: t, type: window.currentType, content: d.content })
                 }).catch(function() {});
+
+                // v2.2.2: 搜尋成功後自動收藏（可關）
+                if (window.autoFavoriteEnabled && window.autoFavoriteEnabled()) {
+                    window.autoFavoriteCurrent(t, window.currentType, d.content);
+                }
             }
             
             window.showToast('分析完成！');

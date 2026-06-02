@@ -1,6 +1,6 @@
 {
   "name": "stockadvisor",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "個人美股 AI 投顧助手",
   "main": "server.js",
   "scripts": {
