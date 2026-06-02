@@ -111,13 +111,25 @@
             var aD = await results[3].json();
             
             if (pD.success) {
-                window.srvPortfolio = pD.portfolio || [];
-                window.srvCash = 0;
+                // 後端 DB 使用 snake_case；前端模組部分地方讀 camelCase，這裡做兼容映射
+                window.srvPortfolio = (pD.portfolio || []).map(function(p) {
+                    p.buyPrice = p.buy_price;
+                    p.stopLoss = p.stop_loss;
+                    p.takeProfit = p.take_profit;
+                    p.currentPrice = p.current_price || p.currentPrice || 0;
+                    return p;
+                });
+                window.srvCash = typeof pD.cash === 'number' ? pD.cash : (window.currentUser && typeof window.currentUser.cash === 'number' ? window.currentUser.cash : 0);
                 window.srvDivs = pD.dividends || [];
             }
             
             if (wD.success) {
-                window.srvWatchlist = wD.watchlist || [];
+                window.srvWatchlist = (wD.watchlist || []).map(function(w) {
+                    w.groupName = w.group_name;
+                    w.targetBuyPrice = w.target_buy_price;
+                    w.targetSellPrice = w.target_sell_price;
+                    return w;
+                });
                 window.srvWLGroups = wD.groups || [];
             }
             
@@ -128,9 +140,15 @@
             if (aD.success) {
                 window.srvAlerts = aD.alerts || [];
             }
+
+            // 重新渲染當前頁，避免登入後資料已載入但畫面仍停在空狀態
+            if (window.renderPortfolio) window.renderPortfolio();
+            if (window.renderWatchlist) window.renderWatchlist();
+            if (window.renderMarketStats) window.renderMarketStats();
             
         } catch (e) {
             console.error('載入服務器數據失敗:', e);
+            if (window.showToast) window.showToast('載入持倉/自選資料失敗，請重新登入後再試');
         }
     };
     

@@ -37,3 +37,10 @@
 - 去重：同一 ticker+type 同一天只收藏一次
 - 開關：localStorage `stock_auto_favorite` (預設 1，改 0 可關閉)
 - 不彈 modal、不自動切收藏頁、無額外 toast，不干擾使用體驗
+
+## v2.2.3 — 2026-06-02
+- 修復 Wilson 持倉/自選股看似消失：DB 資料仍在，前端 `loadSrvData()` 補 snake_case ↔ camelCase 相容映射，載入完成後主動刷新持倉/自選/市場統計畫面
+- `/api/portfolio` 回傳新增 `cash`，前端現金餘額不再固定為 0
+- 修復首頁搜尋/分析資料獲取：將 read-only 市場資料端點加入 auth 白名單（`/api/quote`, `/api/quotes`, `/api/config`, `/api/market/indices`, `/api/chart/:ticker`, `/api/financial/:ticker`, `/api/moat/:ticker`）
+- 恢復 v2.0.0 類似資料鏈路：`/api/analyze` 內部 server-side fetch 可重新取得 quote/chart/financial/moat 數據，再進行分析
+- 更新 `public/app.js` 與 `index.html` 的模組版本標識到 v2.2.3

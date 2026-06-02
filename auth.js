@@ -103,11 +103,19 @@ function authMiddleware(req, res, next) {
         '/api/auth/register',
         '/api/auth/logout',
         '/api/version',
+        // 市場資料/分析配置為 read-only，可公開；/api/analyze 內部也依賴這些端點
+        '/api/config',
+        '/api/quote',
+        '/api/quotes',
+        '/api/market/indices',
         '/favicon.ico',
         '/',
     ];
 
     if (whitelist.includes(reqPath) ||
+        reqPath.startsWith('/api/chart/') ||
+        reqPath.startsWith('/api/financial/') ||
+        reqPath.startsWith('/api/moat/') ||
         reqPath.startsWith('/css/') ||
         reqPath.startsWith('/js/') ||
         reqPath.startsWith('/images/') ||

@@ -420,7 +420,7 @@ app.get('/api/portfolio', (req, res) => {
   const items = stmts.getPortfolio.all(req.user.userId);
   const user = stmts.getUserById.get(req.user.userId);
   const divs = stmts.getDividendsAll.all(req.user.userId);
-  res.json({ success: true, portfolio: items, dividends: divs });
+  res.json({ success: true, portfolio: items, dividends: divs, cash: user ? user.cash : 0 });
 });
 
 app.post('/api/portfolio/buy', (req, res) => {
