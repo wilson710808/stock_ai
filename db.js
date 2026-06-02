@@ -181,6 +181,7 @@ const stmts = {
   // Favorites
   addFavorite: db.prepare(`INSERT INTO analysis_favorites (user_id, analysis_id, ticker, type, note) VALUES (?, ?, ?, ?, ?)`),
   removeFavorite: db.prepare(`DELETE FROM analysis_favorites WHERE id = ? AND user_id = ?`),
+  updateFavorite: db.prepare(`UPDATE analysis_favorites SET note = ? WHERE id = ? AND user_id = ?`),
   getFavorites: db.prepare(`SELECT f.*, a.content, a.recommendation FROM analysis_favorites f LEFT JOIN analysis_history a ON f.analysis_id = a.id WHERE f.user_id = ? ORDER BY f.created_at DESC`),
   getFavoritesByTicker: db.prepare(`SELECT f.*, a.content, a.recommendation FROM analysis_favorites f LEFT JOIN analysis_history a ON f.analysis_id = a.id WHERE f.user_id = ? AND f.ticker = ? ORDER BY f.created_at DESC`),
   // Login Logs

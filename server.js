@@ -1991,6 +1991,22 @@ app.delete('/api/favorites/:id', (req, res) => {
   }
 });
 
+// 更新收藏
+app.put('/api/favorites/:id', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { id } = req.params;
+  const { note, recommendation } = req.body;
+  try {
+    const result = stmts.updateFavorite.run(note || '', parseInt(id), req.user.userId);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: '收藏記錄不存在或無權限' });
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: '更新收藏失敗: ' + e.message });
+  }
+});
+
 // 獲取所有收藏
 app.get('/api/favorites', (req, res) => {
   if (!req.user) return res.status(401).json({ error: '請先登錄' });
@@ -2054,53 +2070,19 @@ app.get('/api/favorites/grouped', (req, res) => {
 });
 
 // ============================================
-// 分析记录保存 API
+// 分析记录保存 API（寫入數據庫）
 app.post('/api/save-analysis', (req, res) => {
-  const { ticker, type, content, quote, conclusion } = req.body;
-  const fs = require('fs');
-  const path = require('path');
-  
-  const today = new Date().toISOString().split('T')[0];
-  const record = {
-    timestamp: new Date().toISOString(),
-    ticker,
-    type,
-    content,
-    quote,
-    conclusion
-  };
-  
-  // 保存到记忆区域
-  const memoryDir = path.join(__dirname, '..', 'memory', 'analysis');
-  if (!fs.existsSync(memoryDir)) {
-    fs.mkdirSync(memoryDir, { recursive: true });
+  if (!req.user) return res.status(401).json({ error: '請先登錄' });
+  const { ticker, type, content, recommendation } = req.body;
+  if (!ticker || !type) {
+    return res.status(400).json({ error: '缺少必要參數' });
   }
-  
-  const filename = `${today}_${ticker}_${type}.json`;
-  fs.writeFileSync(path.join(memoryDir, filename), JSON.stringify(record, null, 2));
-  
-  // 同时追加到每日汇总
-  const summaryFile = path.join(__dirname, '..', 'memory', `analysis_${today}.md`);
-  const summaryEntry = `
-## ${new Date().toLocaleTimeString('zh-TW')} - ${ticker} (${type})
-
-### 核心结论
-${conclusion || '无'}
-
-### 关键数据
-- 价格: ${quote?.price ? '$' + quote.price : '-'}
-- 涨跌: ${quote?.changePercent ? quote.changePercent + '%' : '-'}
-
----
-`;
-  
-  if (fs.existsSync(summaryFile)) {
-    fs.appendFileSync(summaryFile, summaryEntry);
-  } else {
-    fs.writeFileSync(summaryFile, `# ${today} 分析记录\n${summaryEntry}`);
+  try {
+    const result = stmts.insertAnalysis.run(req.user.userId, ticker.toUpperCase(), type, content || '', recommendation || '');
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: '保存分析失敗: ' + e.message });
   }
-  
-  res.json({ success: true, filename });
 });
 
 // （analysis-history GET 已在前面通過數據庫定義，此處不再重複）
