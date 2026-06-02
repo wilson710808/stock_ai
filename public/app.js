@@ -408,6 +408,20 @@ window.saveAndGo = function(t) {
 
 // 初始化：動態在底部導航中加入推薦按鈕
 document.addEventListener('DOMContentLoaded', function() {
+    // 從後端同步版本號到頁面頂部 .version-tag
+    (async () => {
+        try {
+            const r = await fetch('api/version');
+            const d = await r.json();
+            if (d && d.success && d.version) {
+                const tag = document.getElementById('appVersionTag');
+                if (tag) {
+                    tag.textContent = 'v' + d.version;
+                    tag.title = (d.name || 'Stock AI') + ' v' + d.version;
+                }
+            }
+        } catch (e) { /* 靜默：保留 HTML 內預設版本號 */ }
+    })();
     // 檢查是否有 recommendPage，沒有就創建
     if (!$('recommendPage')) {
         const el = document.createElement('main');

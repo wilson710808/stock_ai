@@ -15,6 +15,7 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 .header{position:fixed;top:0;left:0;right:0;background:rgba(255,255,255,.95);backdrop-filter:blur(20px);padding:14px 20px;z-index:100;border-bottom:1px solid var(--border)}
 .header-inner{max-width:600px;margin:0 auto;display:flex;justify-content:space-between;align-items:center}
 .logo{font-size:20px;font-weight:700}.logo span{color:var(--accent)}.logo-sub{font-size:12px;color:var(--text-secondary)}
+.version-tag{display:inline-block;margin-left:8px;padding:2px 8px;font-size:11px;font-weight:600;color:var(--accent);background:rgba(var(--accent-rgb),.12);border:1px solid rgba(var(--accent-rgb),.35);border-radius:10px;vertical-align:middle;letter-spacing:.3px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #userArea{display:flex;align-items:center;gap:8px}
 .user-btn{padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px}
 .user-btn:active{transform:scale(.97)}
@@ -123,7 +124,7 @@ body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;back
 <!-- Header -->
 <header class="header">
  <div class="header-inner">
-  <div><div class="logo">Stock<span>AI</span></div><div class="logo-sub">美股 AI 投顧助手</div></div>
+  <div><div class="logo">Stock<span>AI</span><span id="appVersionTag" class="version-tag" title="Stock AI 版本">v2.0.0</span></div><div class="logo-sub">美股 AI 投顧助手</div></div>
   <div id="userArea"><span id="aiCtxIndicator" style="display:none;font-size:11px;background:rgba(59,130,246,.15);color:#60a5fa;padding:3px 8px;border-radius:6px;margin-right:8px"></span>
    <button class="h-btn" id="loginBtn" onclick="showAuthModal()" style="font-size:13px;padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">登錄</button>
   </div>

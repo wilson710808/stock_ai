@@ -99,6 +99,9 @@
 </head>
 <body>
     <div class="container">
+        <div style="text-align:center;font-size:11px;color:#9ca3af;margin-bottom:14px;letter-spacing:.4px">
+            <span id="appVersionTag" style="display:inline-block;padding:2px 10px;border:1px solid #d1d5db;border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#22c55e;background:#f0fdf4">v2.0.0</span>
+        </div>
         <h1>建立新帳號</h1>
         <form id="registerForm">
             <div class="form-group">
@@ -122,6 +125,13 @@
     </div>
 
     <script>
+        fetch('api/version').then(r=>r.json()).then(d=>{
+            if (d && d.success && d.version) {
+                const tag = document.getElementById('appVersionTag');
+                if (tag) tag.textContent = 'v' + d.version;
+            }
+        }).catch(()=>{});
+
         document.getElementById('registerForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const username = document.getElementById('username').value.trim();

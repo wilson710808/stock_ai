@@ -82,6 +82,7 @@ function authMiddleware(req, res, next) {
         '/api/auth/login',
         '/api/auth/register',
         '/api/auth/logout',
+        '/api/version',
         '/favicon.ico',
         '/',
         '/ws/07-stock-ai/',

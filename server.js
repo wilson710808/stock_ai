@@ -268,6 +268,16 @@ app.post('/api/sector/batch', (req, res) => {
   res.json({ sectors: result });
 });
 
+// ===== 版本資訊 API =====
+// 從 package.json 讀取版本號，前端用來顯示在最上方
+const APP_VERSION = (() => {
+  try { return require('./package.json').version || '0.0.0'; }
+  catch (e) { return '0.0.0'; }
+})();
+app.get('/api/version', (req, res) => {
+  res.json({ success: true, version: APP_VERSION, name: 'Stock AI' });
+});
+
 // ===== 認證 API =====
 
 // 註冊
