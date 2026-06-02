@@ -1983,25 +1983,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-
-// 用戶投資上下文 API（前端可查詢 AI 已掌握的用戶資訊）
-app.get('/api/user-context', async (req, res) => {
-  if (!req.user) return res.json({ success: true, context: '', hasPortfolio: false, hasWatchlist: false });
-  try {
-    const ctx = await buildUserInvestContext(req.user.userId);
-    const pf = stmts.getPortfolio.all(req.user.userId);
-    const wl = stmts.getWatchlist.all(req.user.userId);
-    res.json({ success: true, context: ctx, hasPortfolio: pf.length > 0, hasWatchlist: wl.length > 0 });
-  } catch(e) {
-    res.json({ success: true, context: '', hasPortfolio: false, hasWatchlist: false });
-  }
-});
-
-// SPA fallback (移至此處：避免描戰後續定義的 API 路由)
-// app.get('*', ...) 已移至檔案最後面
-
-// ===== 收藏功能 API =====
-
 // 添加收藏
 app.post('/api/favorites/add', (req, res) => {
   if (!req.user) return res.status(401).json({ error: '請先登錄' });
