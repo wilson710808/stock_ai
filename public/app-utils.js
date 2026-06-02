@@ -152,13 +152,21 @@
      * 切換頁面
      * @param {string} p - 頁面標識
      */
-    window.showPage = function(p) {
+    window.showPage = async function(p) {
         document.querySelectorAll('.page').forEach(function(x) { x.classList.remove('active'); });
         document.querySelectorAll('.nav-item').forEach(function(x) { x.classList.remove('active'); });
         var pageEl = $(p + 'Page');
         if (pageEl) pageEl.classList.add('active');
         var navEl = document.querySelector('.nav-item[data-page="' + p + '"]');
         if (navEl) navEl.classList.add('active');
+
+        // v2.2.5: 進入持倉/自選頁時強制從服務端同步一次，避免舊快取或初始化順序導致空資料
+        if ((p === 'watchlist' || p === 'portfolio') && window.currentUser && window.loadSrvData && !window._loadingSrvDataForPage) {
+            window._loadingSrvDataForPage = true;
+            try { await window.loadSrvData(); } catch(e) {}
+            window._loadingSrvDataForPage = false;
+        }
+
         if (p === 'watchlist' && window.renderWatchlist) window.renderWatchlist();
         if (p === 'portfolio' && window.renderPortfolio) window.renderPortfolio();
     };
