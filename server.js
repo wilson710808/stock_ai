@@ -1972,7 +1972,8 @@ app.post('/api/favorites/add', (req, res) => {
       const r = stmts.insertAnalysis.run(req.user.userId, ticker, type, content, '');
       aid = r.lastInsertRowid;
     }
-    const result = stmts.addFavorite.run(req.user.userId, aid || 0, ticker, type, note || '');
+    // 修復：如果 aid 為 falsy，傳入 null 而不是 0
+    const result = stmts.addFavorite.run(req.user.userId, aid ? aid : null, ticker, type, note || '');
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: '收藏失敗: ' + e.message });
