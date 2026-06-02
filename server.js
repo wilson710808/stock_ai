@@ -33,7 +33,7 @@ function getSector(ticker) {
 const DEFAULT_SECTORS = ['科技','消費','金融','通訊','醫療','能源','工業','材料','地產','公用'];
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3007;
 
 // AI Gateway 整合 — 所有 AI 請求透過 Gateway 轉發
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:3005';
@@ -915,7 +915,7 @@ async function buildUserInvestContext(userId) {
         if (cachedQ && (Date.now() - cachedQ.timestamp) < CONTEXT_QUOTES_CACHE_TTL) {
           quotes = cachedQ.data;
         } else {
-          const resp = await timedFetch('http://127.0.0.1:3001/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) }, 10000);
+          const resp = await timedFetch(`http://127.0.0.1:${PORT}/api/quotes`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tickers}) }, 10000);
           const qd = await resp.json();
           if (qd.success && qd.quotes) {
             const qArr = Array.isArray(qd.quotes) ? qd.quotes : Object.values(qd.quotes);
