@@ -61,12 +61,27 @@ function verifyJWT(token) {
 
 // 認證中間件
 function authMiddleware(req, res, next) {
+    const path = req.path;
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || 
+                  req.cookies.token ||
+                  req.cookies.stockai_token;
+
+    // /api/auth/me 允許未登入查詢，但若帶 token 必須解析出 req.user
+    if (path === '/api/auth/me') {
+        if (token) {
+            const decoded = verifyJWT(token);
+            if (decoded) req.user = decoded;
+        }
+        return next();
+    }
+
     // 白名單：不需登入即可訪問的路由
     const whitelist = [
         '/login.html',
         '/register.html',
         '/api/auth/login',
         '/api/auth/register',
+        '/api/auth/logout',
         '/favicon.ico',
         '/',
         '/ws/07-stock-ai/',
@@ -74,21 +89,16 @@ function authMiddleware(req, res, next) {
         '/ws/07-stock-ai/register.html'
     ];
     
-    // 白名單路由直接放行
-    const path = req.path;
+    // 白名單路由直接放行；其他 /api/auth/*（profile/password 等）仍需認證
     if (whitelist.includes(path) || 
         path.startsWith('/css/') || 
         path.startsWith('/js/') || 
         path.startsWith('/images/') ||
-        path.startsWith('/api/auth/') ||  // 所有 auth API 豁免
         path.endsWith('.css') ||
         path.endsWith('.js')) {
         return next();
     }
     
-    const token = (req.headers.authorization || '').replace('Bearer ', '') || 
-                  req.cookies.token ||
-                  req.cookies.stockai_token;
     if (!token) {
         // 頁面請求：重定向到登入頁；API 請求：返回 401
         if (path.endsWith('.html') || path === '/' || !path.startsWith('/api/')) {
