@@ -12,3 +12,5 @@ stockai.db
 *.db
 stockai.db-*
 __pycache__/
+
+.kline_cache/

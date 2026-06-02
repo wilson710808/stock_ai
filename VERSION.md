@@ -44,3 +44,7 @@
 - 修復首頁搜尋/分析資料獲取：將 read-only 市場資料端點加入 auth 白名單（`/api/quote`, `/api/quotes`, `/api/config`, `/api/market/indices`, `/api/chart/:ticker`, `/api/financial/:ticker`, `/api/moat/:ticker`）
 - 恢復 v2.0.0 類似資料鏈路：`/api/analyze` 內部 server-side fetch 可重新取得 quote/chart/financial/moat 數據，再進行分析
 - 更新 `public/app.js` 與 `index.html` 的模組版本標識到 v2.2.3
+
+## v2.2.4 — 2026-06-02
+- 運維清理：將 `.kline_cache/` 加入 `.gitignore`，避免 K 線運行時快取污染 Git 工作區
+- 版本標識同步到 v2.2.4
