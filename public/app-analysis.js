@@ -39,16 +39,18 @@
      */
     window.addToHistory = function(t, type) {
         var now = Date.now();
-        // 避免重複
-        var existing = window.history.findIndex(function(h) {
-            return h.ticker === t && h.type === type;
+        var safeType = type || 'overview';
+        if (!Array.isArray(window.stockHistory)) window.stockHistory = [];
+        // 避免重複；不要使用 window.history（瀏覽器原生 History 物件）
+        var existing = window.stockHistory.findIndex(function(h) {
+            return h.ticker === t && h.type === safeType;
         });
         if (existing >= 0) {
-            window.history.splice(existing, 1);
+            window.stockHistory.splice(existing, 1);
         }
-        window.history.unshift({ ticker: t, type: type, time: now });
-        if (window.history.length > 50) window.history = window.history.slice(0, 50);
-        window.saveLS('stock_history', window.history);
+        window.stockHistory.unshift({ ticker: t, type: safeType, time: now });
+        if (window.stockHistory.length > 50) window.stockHistory = window.stockHistory.slice(0, 50);
+        window.saveLS('stock_history', window.stockHistory);
         window.renderHistory();
     };
     
@@ -59,7 +61,7 @@
         var list = window.getHistoryList() || $('historyList');
         if (!list) return;
         
-        if (!window.history.length) {
+        if (!Array.isArray(window.stockHistory) || !window.stockHistory.length) {
             list.innerHTML = '<div class="empty"><div class="empty-icon">📜</div><div class="empty-text">尚無分析記錄</div></div>';
             return;
         }
@@ -73,7 +75,7 @@
             'portfolio': '組合分析'
         };
         
-        list.innerHTML = window.history.map(function(h) {
+        list.innerHTML = window.stockHistory.map(function(h) {
             return '<div class="history-item" onclick="quickAnalyze(\'' + h.ticker + '\')">' +
                 '<div class="history-ticker">' + h.ticker + '</div>' +
                 '<div class="history-info">' +
@@ -93,6 +95,7 @@
     window.analyze = async function() {
         var input = window.getTickerInput() || $('tickerInput');
         var t = input.value.trim().toUpperCase();
+        var analysisType = window.currentType || 'overview';
         
         if (!t) {
             window.showToast('請輸入股票代碼');
@@ -135,7 +138,7 @@
             var r = await fetch('api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker: t, type: window.currentType })
+                body: JSON.stringify({ ticker: t, type: analysisType })
             });
             var d = await r.json();
             
@@ -143,19 +146,19 @@
                 throw new Error(d.error || '分析失敗');
             }
             
-            window.renderResult(t, window.currentType, d.content, q);
-            window.addToHistory(t, window.currentType);
+            window.renderResult(t, analysisType, d.content, q);
+            window.addToHistory(t, analysisType);
             
             if (window.currentUser) {
                 fetch('api/analysis-history', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ticker: t, type: window.currentType, content: d.content })
+                    body: JSON.stringify({ ticker: t, type: analysisType, content: d.content })
                 }).catch(function() {});
 
                 // v2.2.2: 搜尋成功後自動收藏（可關）
                 if (window.autoFavoriteEnabled && window.autoFavoriteEnabled()) {
-                    window.autoFavoriteCurrent(t, window.currentType, d.content);
+                    window.autoFavoriteCurrent(t, analysisType, d.content);
                 }
             }
             

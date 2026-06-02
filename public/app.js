@@ -1,5 +1,5 @@
 /**
- * StockAI - 主入口文件 v2.2.8
+ * StockAI - 主入口文件 v2.2.9
  * 
  * 本文件為模組化重構後的入口點，負責加載各個功能模組。
  * 完整的代碼已拆分到以下模組：
@@ -22,7 +22,7 @@
 
 // ===== 版本標識 =====
 
-console.log('StockAI v2.2.8 - Modular Build');
+console.log('StockAI v2.2.9 - Modular Build');
 
 // ===== 模組加載狀態 =====
 
@@ -62,7 +62,7 @@ function onModulesReady() {
 // 這些可以在未來版本中移除
 
 window.StockAI = {
-    version: '2.2.8',
+    version: '2.2.9',
     modules: [
         'app-config.js',
         'app-utils.js',
@@ -90,7 +90,7 @@ window.StockAI = {
             version: this.version,
             modules: this.modules,
             currentUser: !!window.currentUser,
-            historyCount: window.history ? window.history.length : 0,
+            historyCount: window.stockHistory ? window.stockHistory.length : 0,
             portfolioCount: window.gPF ? window.gPF().length : 0,
             watchlistCount: window.gWL ? window.gWL().length : 0
         };

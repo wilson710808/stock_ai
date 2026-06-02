@@ -60,3 +60,11 @@
 - 將 `server.js` 預設端口由 3001 改回 #07 生產端口 3007
 - 將 `buildUserInvestContext()` 內部 `/api/quotes` 呼叫從硬編碼 `127.0.0.1:3001` 改為 `127.0.0.1:${PORT}`，避免抓錯 webspace
 - 前端版本標識與 cache-buster 升至 `20260602008`
+
+
+## v2.2.9 — 2026-06-02
+- 修復前端初始化中斷：不再覆寫瀏覽器原生 `window.history`，改用 `window.stockHistory`
+- 修復因初始化中斷導致 `checkAuth()` 未執行，Wilson 登入後持倉/自選看似丟失
+- 修復全面分析 `type` 可能為空，導致 `analysis_history.type` NOT NULL 錯誤與分析流程不穩
+- 後端 `/api/analyze` 增加 `analysisType` fallback：空 type 預設 `overview`
+- 前端版本與 cache-buster 升至 `20260602009`

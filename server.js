@@ -1396,6 +1396,7 @@ app.get('/api/recommend', async (req, res) => {
 // 分析 API
 app.post('/api/analyze', async (req, res) => {
   const { ticker, question, type } = req.body;
+  const analysisType = type || (question ? 'chat' : 'overview');
   if (!ticker && !question) {
     return res.status(400).json({ error: '請提供股票代碼或問題' });
   }
@@ -1930,7 +1931,7 @@ XXX
     // 透過 AI Gateway 發送分析請求
     const aiMessages = [
       { role: 'system', content: SYSTEM_PROMPT + await buildUserInvestContext(req.user?.userId) },
-      { role: 'user', content: prompts[type] || prompts.chat }
+      { role: 'user', content: prompts[analysisType] || prompts.overview || prompts.chat }
     ];
     const aiResponse = await gatewayChat(aiMessages);
 
@@ -1944,20 +1945,20 @@ XXX
       // 保存分析記錄（如果有用戶登錄）
       if (req.user?.userId) {
         try {
-          stmts.insertAnalysis.run(req.user.userId, ticker, type, aiResponse, recommendation);
+          stmts.insertAnalysis.run(req.user.userId, ticker, analysisType, aiResponse, recommendation);
         } catch (e) {
           console.error('[Analyze] 保存分析記錄失敗:', e.message);
         }
       }
-      res.json({ success: true, content: aiResponse, ticker, type, model: 'gateway', recommendation });
+      res.json({ success: true, content: aiResponse, ticker, type: analysisType, model: 'gateway', recommendation });
     } else {
-      const fallbackContent = generateFallbackAnalysis(ticker, type);
-      res.json({ success: true, content: fallbackContent, ticker, type, fallback: true });
+      const fallbackContent = generateFallbackAnalysis(ticker, analysisType);
+      res.json({ success: true, content: fallbackContent, ticker, type: analysisType, fallback: true });
     }
   } catch (error) {
     console.error('Analyze error:', error.message);
-    const fallbackContent = generateFallbackAnalysis(ticker, type);
-    res.json({ success: true, content: fallbackContent, ticker, type, fallback: true });
+    const fallbackContent = generateFallbackAnalysis(ticker, analysisType);
+    res.json({ success: true, content: fallbackContent, ticker, type: analysisType, fallback: true });
   }
 });
 

@@ -25,7 +25,9 @@
     window.srvDivs = [];
     
     // ===== 歷史記錄 =====
-    window.history = JSON.parse(localStorage.getItem('stock_history') || '[]');
+    // 不可使用 window.history：它是瀏覽器原生 History 物件，覆寫會失敗並導致 .map/.findIndex 報錯，中斷初始化
+    window.stockHistory = JSON.parse(localStorage.getItem('stock_history') || '[]');
+    if (!Array.isArray(window.stockHistory)) window.stockHistory = [];
     window.chatHistoryArr = [];
     
     // ===== 用戶投資上下文 =====
