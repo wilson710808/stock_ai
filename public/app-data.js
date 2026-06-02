@@ -146,6 +146,10 @@
             if (window.renderWatchlist) window.renderWatchlist();
             if (window.renderMarketStats) window.renderMarketStats();
             
+            // 渲染 UI（持倉 + 自選）
+            if (window.renderPortfolio) window.renderPortfolio();
+            if (window.renderWatchlist) window.renderWatchlist();
+
         } catch (e) {
             console.error('載入服務器數據失敗:', e);
             if (window.showToast) window.showToast('載入持倉/自選資料失敗，請重新登入後再試');

@@ -27,6 +27,9 @@
             } else {
                 window.currentUser = null;
                 window.renderUserArea();
+                // 未登入：用 localStorage 數據渲染（首次加載時需主動觸發）
+                if (window.renderPortfolio) window.renderPortfolio();
+                if (window.renderWatchlist) window.renderWatchlist();
             }
         } catch (e) {
             window.currentUser = null;
@@ -147,6 +150,8 @@
             if (window.loadSrvData) await window.loadSrvData();
             if (window.loadUserInvestCtx) await window.loadUserInvestCtx();
             if (window.checkLocalMigration) window.checkLocalMigration();
+            if (window.renderPortfolio) window.renderPortfolio();
+            if (window.renderWatchlist) window.renderWatchlist();
             
         } catch (e) {
             window.showToast('登錄失敗');
