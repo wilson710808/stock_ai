@@ -369,14 +369,14 @@ def get_kline_eodhd(ticker, days=90):
 
 def get_simulated_data(ticker):
     """使用統一中央價格庫（stock_prices.json），確保所有價格一致且正確
-    
+
     修復：當所有 API 均不可用時，使用 stock_prices.json 中的固定價格，
     避免 random 導致每次請求結果不同（價格漂移問題）
     """
     import os
     ticker = ticker.upper()
     ticker = ticker.replace('.', '-')  # 統一格式（BRK.B → BRK-B）
-    
+
     # 優先從 stock_prices.json 讀取（中央價格庫）
     price_file = os.path.join(os.path.dirname(__file__), 'stock_prices.json')
     try:
@@ -384,18 +384,18 @@ def get_simulated_data(ticker):
             PRICE_DB = json.load(f)
     except:
         PRICE_DB = {}
-    
+
     # 嘗試精確匹配
     if ticker in PRICE_DB:
         data = PRICE_DB[ticker]
         return _build_quote_response(ticker, data)
-    
+
     # 嘗試備用格式
     alt_ticker = ticker.replace('-', '.')
     if alt_ticker in PRICE_DB:
         data = PRICE_DB[alt_ticker]
         return _build_quote_response(ticker, data)
-    
+
     # 未知股票：返回一個基於股票代碼哈希的固定值，避免每次 random 不同
     # 修復：使用股票代碼的字元哈希作為 seed，避免每次調用 random 值不同
     ticker_hash = hash(ticker) % 1000  # 0-999 的固定哈希
@@ -444,36 +444,36 @@ def _build_quote_response(ticker, data):
 # ============================================
 
 def get_quote(ticker):
-    """主流程：優先從 Stooq/Yahoo 獲取實時價格，與 K線圖最後一根蠟燭一致"""
-    # Step 1: 優先 Stooq（免費無需 API Key，實時數據）
-    stooq = get_quote_stooq(ticker)
-    if stooq.get('success'):
-        return stooq
-    
-    # Step 2: Yahoo Finance
+    """主流程：沿用 v2.0.0 的 realtime_price.py 報價鏈路，並以 Yahoo regularMarketPrice 作為當前現價優先來源。"""
+    # Step 1: Yahoo Finance regularMarketPrice（當前現價；同時用 chartPreviousClose 算當日漲幅）
     result = get_quote_yahoo(ticker)
     if result.get('success'):
         return result
-    
+
+    # Step 2: Stooq CSV（免費無需 API Key；作為 Yahoo 不可用時的備用）
+    stooq = get_quote_stooq(ticker)
+    if stooq.get('success'):
+        return stooq
+
     # Step 3: Twelve Data
     td = get_quote_twelvedata(ticker)
     if td.get('success'):
         return td
-    
+
     # Step 4: 從 EODHD K線獲取最新收盤價（作為備用）
     try:
         kline = get_kline_eodhd(ticker, 30)
         if kline.get('success') and kline.get('candles') and len(kline['candles']) >= 1:
             last_candle = kline['candles'][-1]
             prev_candle = kline['candles'][-2] if len(kline['candles']) >= 2 else last_candle
-            
+
             price = last_candle['close']
             prev_close = prev_candle['close']
             change = round(price - prev_close, 2)
             change_percent = round((change / prev_close * 100), 2) if prev_close > 0 else 0
-            
+
             name = _TICKER_NAMES.get(ticker.upper(), ticker.upper())
-            
+
             return {
                 'success': True,
                 'ticker': ticker.upper(),
@@ -492,7 +492,7 @@ def get_quote(ticker):
             }
     except Exception as e:
         pass
-    
+
     # Step 5: 最後防線 - 模擬數據
     return get_simulated_data(ticker)
 
@@ -557,7 +557,7 @@ def get_kline(ticker, days=90):
 def _get_simulated_kline(ticker, days=90):
     """模擬 K 線數據（最後防線），基於當前真實價格生成，讓 K 線與當前價格匹配"""
     import random
-    
+
     # 首先嘗試獲取當前真實價格作為基準
     base_price = 150.0
     try:
@@ -566,7 +566,7 @@ def _get_simulated_kline(ticker, days=90):
             base_price = float(q.get('price', base_price))
     except:
         pass
-    
+
     candles = []
     price = base_price
     now = datetime.now()
@@ -589,13 +589,13 @@ def _get_simulated_kline(ticker, days=90):
             'volume': random.randint(10000000, 80000000)
         })
         price = close_p
-    
+
     # 確保最後一根 K 線的收盤價與當前真實價格一致
     if candles:
         candles[-1]['close'] = round(base_price, 2)
         candles[-1]['high'] = max(candles[-1]['high'], candles[-1]['close'])
         candles[-1]['low'] = min(candles[-1]['low'], candles[-1]['close'])
-    
+
     return {
         'success': True,
         'ticker': ticker,

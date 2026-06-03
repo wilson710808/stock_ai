@@ -474,8 +474,10 @@
                 var profitPct = cost > 0 ? (profit / cost * 100) : 0;
                 var ratio = totalValue > 0 ? (value / totalValue * 100) : 0;
                 var up = profit >= 0;
-                var chg = q ? q.change : 0;
-                var chgPct = q ? q.changePercent : 0;
+                // 當日漲跌幅固定以「現價 - 前一交易日收盤價」/「前一交易日收盤價」計算。
+                var prevClose = q && Number(q.prevClose) > 0 ? Number(q.prevClose) : 0;
+                var chg = prevClose > 0 ? (cp - prevClose) : (q ? q.change : 0);
+                var chgPct = prevClose > 0 ? (chg / prevClose * 100) : (q ? q.changePercent : 0);
                 var sl = window.currentUser ? p.stop_loss : p.stopLoss;
                 var tp = window.currentUser ? p.take_profit : p.takeProfit;
                 var note = window.currentUser ? p.note : (p.note || '');
@@ -665,7 +667,10 @@
                 body: JSON.stringify({ tickers: tickers })
             });
             var qd = await qr.json();
-            var quotes = qd.success ? qd.quotes : {};
+            var quotes = {};
+            if (qd.success && Array.isArray(qd.quotes)) {
+                qd.quotes.forEach(function(q) { if (q && q.success) quotes[q.ticker] = q; });
+            }
             
             // 計算持倉明細
             var totalValue = 0, totalCost = 0;

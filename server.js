@@ -631,10 +631,14 @@ app.get('/api/analysis-history', (req, res) => {
 });
 
 app.post('/api/analysis-history', (req, res) => {
-  if (!req.user) return res.json({ success: true }); // 未登錄靜默跳過
+  if (!req.user) return res.json({ success: true, skipped: true }); // 未登錄靜默跳過
   const { ticker, type, content, recommendation } = req.body;
-  stmts.insertAnalysis.run(req.user.userId, ticker, type, content || '', recommendation || '');
-  res.json({ success: true });
+  try {
+    const result = stmts.insertAnalysis.run(req.user.userId, normalizeTicker(ticker), type || 'overview', content || '', recommendation || '');
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ success: false, error: '保存分析失敗: ' + e.message });
+  }
 });
 
 // ===== localStorage 遷移 API =====
@@ -1243,38 +1247,104 @@ function timedFetch(url, options = {}, timeoutMs = 10000) {
   });
 }
 
-function getStockPricePython(ticker) {
+function normalizeTicker(ticker) {
+  return String(ticker || '').trim().toUpperCase();
+}
+
+function normalizeQuoteResult(result, ticker) {
+  if (!result || typeof result !== 'object') return null;
+  if (!result.success && result.price) result.success = true;
+  if (result.success && result.price) {
+    result.ticker = normalizeTicker(result.ticker || ticker);
+    result.price = Number(result.price);
+    result.prevClose = Number(result.prevClose || result.previousClose || result.regularMarketPreviousClose || 0);
+
+    // 當日漲跌必須以「現價 vs 前一交易日收盤價」重新計算，避免任何來源回傳的 changePercent 不一致。
+    if (Number.isFinite(result.price) && Number.isFinite(result.prevClose) && result.prevClose > 0) {
+      result.change = round(result.price - result.prevClose, 2);
+      result.changePercent = round((result.price - result.prevClose) / result.prevClose * 100, 2);
+    } else {
+      result.change = Number(result.change || 0);
+      result.changePercent = Number(result.changePercent || 0);
+    }
+
+    result.open = Number(result.open || 0);
+    result.high = Number(result.high || 0);
+    result.low = Number(result.low || 0);
+    result.volume = Number(result.volume || 0);
+    result.timestamp = result.timestamp || Date.now();
+    result.note = result.note || ((result.source || 'python') + ' 實時數據');
+    return result;
+  }
+  return result;
+}
+
+// v2.0.0 報價方式：統一走 realtime_price.py；單股與批量都使用同一個 Python 數據鏈路。
+function runRealtimePricePython(args, timeoutMs = 20000) {
   return new Promise((resolve) => {
-    // 使用 realtime_price.py（Yahoo Finance 優先）
-    const python = spawn('python3', [path.join(__dirname, 'realtime_price.py'), ticker]);
+    const python = spawn('python3', [path.join(__dirname, 'realtime_price.py'), ...args]);
     let data = '';
     let error = '';
+    let done = false;
+
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
 
     python.stdout.on('data', (chunk) => { data += chunk; });
     python.stderr.on('data', (chunk) => { error += chunk; });
     python.on('close', (code) => {
       if (code === 0 && data) {
         try {
-          const result = JSON.parse(data);
-          // 確保返回格式一致
-          if (result && !result.success && result.price) {
-            result.success = true;
-          }
-          resolve(result);
+          finish(JSON.parse(data));
         } catch (e) {
-          resolve(null);
+          console.error('[Quote] Python JSON parse failed:', e.message, data.slice(0, 300));
+          finish(null);
         }
       } else {
-        resolve(null);
+        if (error) console.warn('[Quote] Python failed:', error.slice(0, 300));
+        finish(null);
       }
     });
-    
-    // 15秒超時
-    setTimeout(() => {
-      python.kill();
-      resolve(null);
-    }, 15000);
+
+    const timer = setTimeout(() => {
+      try { python.kill(); } catch (e) {}
+      finish(null);
+    }, timeoutMs);
   });
+}
+
+async function getStockPricePython(ticker) {
+  const t = normalizeTicker(ticker);
+  const result = await runRealtimePricePython([t], 20000);
+  return normalizeQuoteResult(result, t);
+}
+
+async function getStockPricesPythonBatch(tickers) {
+  const clean = [...new Set((tickers || []).map(normalizeTicker).filter(Boolean))];
+  if (!clean.length) return [];
+
+  // 優先使用 realtime_price.py 內建 --batch，避免 Node 同時啟多個 Python 導致報價源速率限制或結果不穩。
+  const batch = await runRealtimePricePython([clean[0], '--batch', clean.join(',')], Math.max(20000, clean.length * 8000));
+  if (batch && Array.isArray(batch.quotes)) {
+    const byTicker = new Map(batch.quotes.map(q => [normalizeTicker(q.ticker), normalizeQuoteResult(q, q.ticker)]));
+    return clean.map(t => byTicker.get(t) || { success: false, ticker: t, error: '批量報價未返回該股票' });
+  }
+
+  // fallback：逐個查詢，保留 v2.0.0 的 Python 報價鏈路。
+  const results = [];
+  for (const t of clean) {
+    try {
+      const q = await getStockPricePython(t);
+      results.push(q && q.success ? q : { success: false, ticker: t, error: q?.error || '無法獲取價格' });
+    } catch (e) {
+      results.push({ success: false, ticker: t, error: e.message });
+    }
+  }
+  return results;
 }
 
 // 模擬股價數據（備用）- 更新至正確價格
@@ -1297,50 +1367,34 @@ const stockData = {
   'GPRO': { name: 'GoPro Inc.', price: 4.25, change: 0.12, changePercent: 2.90, prevClose: 4.13, high: 4.35, low: 4.08, volume: 2500000, pe: 0, eps: -0.52, marketCap: 500000000, week52High: 5.85, week52Low: 3.20 }
 };
 
-// 報價 API（修復：從 Python realtime_price.py 獲取真實價格，與 K線圖一致）
-app.post('/api/quote', async (req, res) => {
-  const { ticker } = req.body;
-  if (!ticker) return res.status(400).json({ error: '請提供股票代碼' });
-  
-  const t = ticker.trim().toUpperCase();
+// 報價 API：套用 v2.0.0 的 realtime_price.py 當前價格獲取方式；GET/POST 都支援，避免子路徑下 GET 被 SPA fallback 成 HTML。
+async function quoteHandler(req, res) {
+  const ticker = req.method === 'GET' ? req.query.ticker : req.body?.ticker;
+  const t = normalizeTicker(ticker);
+  if (!t) return res.status(400).json({ success: false, error: '請提供股票代碼' });
   
   try {
     const pythonResult = await getStockPricePython(t);
     if (pythonResult && pythonResult.success && pythonResult.price) {
       return res.json({ success: true, ...pythonResult });
     }
-    return res.json({ success: false, error: '無法獲取價格' });
+    return res.json({ success: false, ticker: t, error: pythonResult?.error || '無法獲取價格' });
   } catch (e) {
     console.error('Failed to get quote:', e);
-    return res.json({ success: false, error: e.message });
+    return res.json({ success: false, ticker: t, error: e.message });
   }
-});
+}
+app.get('/api/quote', quoteHandler);
+app.post('/api/quote', quoteHandler);
 
-// 批量報價（修復：從 Python realtime_price.py 獲取真實價格，與 K線圖一致）
+// 批量報價：優先走 realtime_price.py --batch，確保各頁價格與 v2.0.0 Python 數據源一致。
 app.post('/api/quotes', async (req, res) => {
-  const { tickers } = req.body;
+  const { tickers } = req.body || {};
   if (!tickers || !Array.isArray(tickers)) {
-    return res.status(400).json({ error: '請提供股票代碼列表' });
+    return res.status(400).json({ success: false, error: '請提供股票代碼列表' });
   }
   
-  const results = [];
-  const quotePromises = tickers.map(async (t) => {
-    try {
-      const pythonResult = await getStockPricePython(t.toUpperCase());
-      if (pythonResult && pythonResult.success && pythonResult.price) {
-        return pythonResult;
-      }
-      return { success: false, ticker: t, error: '無法獲取價格' };
-    } catch (e) {
-      return { success: false, ticker: t, error: e.message };
-    }
-  });
-  
-  const settled = await Promise.allSettled(quotePromises);
-  settled.forEach(r => {
-    results.push(r.status === 'fulfilled' ? r.value : { success: false, ticker: '?', error: r.reason?.message || '獲取失敗' });
-  });
-  
+  const results = await getStockPricesPythonBatch(tickers);
   res.json({ success: true, quotes: results });
 });
 
@@ -1354,7 +1408,7 @@ app.get('/api/market/indices', async (req, res) => {
   const results = [];
   for (const t of indices) {
     const r = await getStockPricePython(t);
-    if (r && r.price && !r.error) {
+    if (r && r.success && r.price && !r.error) {
       results.push({ ticker: t, ...r });
     } else {
       const fallback = {

@@ -76,3 +76,17 @@
 - K 線圖 badge 顯示資料源與天數，錯誤訊息改為可理解提示
 - 修復決策建議卡片：兼容 `[RECOMMENDATION:BUY|HOLD|SELL|AVOID]` 與中文「最終建議/當前建議/綜合評級」
 - 前端版本與 cache-buster 升至 `20260603001`
+
+
+## v2.2.11 — 2026-06-03
+- 當前價格獲取套回 v2.0.0 的 canonical Python 流程：`realtime_price.py` 作為單股/批量報價唯一來源
+- `realtime_price.py` 報價優先使用 Yahoo `regularMarketPrice` 作為**當前現價**，再 fallback Stooq/TwelveData/EODHD
+- 後端統一以 `(現價 - 前一日收盤價) / 前一日收盤價` 重算 `changePercent`，避免來源欄位不一致
+- 持倉列表當日漲幅也以前一交易日收盤價重算，不再直接信任來源回傳百分比
+- `/api/quote` 同時支援 GET/POST，避免 GET 被 SPA fallback 回 HTML
+- `/api/quotes` 優先使用 `realtime_price.py --batch`，避免並行啟動多個 Python 查詢造成價格源不穩
+- `/api/analysis-history` 回傳新增記錄 ID，前端可關聯收藏
+- 分析成功後更新 `lastAnalysis*` 狀態，等待分析歷史保存，再執行自動收藏並保留 `lastFavoriteId`
+- 恢復結果頁「📚 收藏分析」按鈕，手動收藏與自動收藏都可用
+- 移除 index.html 內舊版 inline 收藏腳本，避免覆蓋模組化實作
+- 前端版本與 cache-buster 升至 `20260603002`

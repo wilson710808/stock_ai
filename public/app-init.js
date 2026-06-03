@@ -228,7 +228,7 @@
             
             window.closeModal();
             window.showToast('✅ 收藏成功');
-            window.lastAnalysisId = null;
+            window.lastFavoriteId = d.id || null;
             
         } catch (e) {
             window.showToast('收藏失敗：' + (e.message || ''));
@@ -474,32 +474,36 @@
         return v === null || v === '1';
     };
     
-    // 靜默自動收藏當前分析（不彈 modal、不重覆同 ticker+type 同一天）
+    // 靜默自動收藏當前分析（不彈 modal、不跳頁；返回結果供驗證）
     window.autoFavoriteCurrent = async function(ticker, type, content) {
-        // 去重：同一 ticker+type 同一天只收藏一次
-        var key = 'auto_fav_' + ticker + '_' + type + '_' + (new Date().toISOString().slice(0,10));
-        if (sessionStorage.getItem(key)) return;
-        
+        var t = String(ticker || window.lastAnalysisTicker || '').toUpperCase();
+        var analysisType = type || window.lastAnalysisType || 'overview';
+        var analysisContent = content || window.lastAnalysisContent || '';
+        if (!t || !analysisContent) return { success: false, skipped: true, error: '缺少收藏內容' };
+
         try {
             var resp = await fetch('api/favorites/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     analysis_id: window.lastAnalysisId || null,
-                    ticker: ticker,
-                    type: type,
-                    content: content,
+                    ticker: t,
+                    type: analysisType,
+                    content: analysisContent,
                     note: 'auto-collected'
                 })
             });
             var d = await resp.json();
             if (d.success) {
-                sessionStorage.setItem(key, '1');
-                // 不自動打開收藏頁，避免干擾
-                // 不跳額外 toast（保留原「分析完成！」
+                window.lastFavoriteId = d.id || null;
+                // 不自動打開收藏頁，避免干擾；不額外 toast，保留「分析完成！」
+            } else {
+                console.warn('[Favorite] 自動收藏失敗:', d.error || d);
             }
+            return d;
         } catch(e) {
-            // 自動收藏失敗靜處理，不干擾使用者
+            console.warn('[Favorite] 自動收藏異常:', e);
+            return { success: false, error: e.message || String(e) };
         }
     };
     

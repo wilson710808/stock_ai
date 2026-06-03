@@ -150,15 +150,29 @@
             window.addToHistory(t, analysisType);
             
             if (window.currentUser) {
-                fetch('api/analysis-history', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ticker: t, type: analysisType, content: d.content })
-                }).catch(function() {});
+                window.lastAnalysisTicker = t;
+                window.lastAnalysisType = analysisType;
+                window.lastAnalysisContent = d.content;
+                window.lastAnalysisId = d.analysisId || d.id || null;
 
-                // v2.2.2: 搜尋成功後自動收藏（可關）
+                try {
+                    var histResp = await fetch('api/analysis-history', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ticker: t, type: analysisType, content: d.content })
+                    });
+                    var histData = await histResp.json();
+                    if (histData && histData.success && histData.id) window.lastAnalysisId = histData.id;
+                } catch (histErr) {
+                    console.warn('[Analysis] 保存分析歷史失敗:', histErr);
+                }
+
+                // v2.2.11: 分析成功後自動收藏，並返回結果供前端/測試確認
                 if (window.autoFavoriteEnabled && window.autoFavoriteEnabled()) {
-                    window.autoFavoriteCurrent(t, analysisType, d.content);
+                    var favResult = await window.autoFavoriteCurrent(t, analysisType, d.content);
+                    if (favResult && favResult.success) {
+                        window.lastFavoriteId = favResult.id;
+                    }
                 }
             }
             
@@ -272,6 +286,7 @@
             '<button class="action-btn secondary" onclick="quickAnalyze(\'' + t + '\')">🔄 重新分析</button>' +
             '<button class="action-btn secondary" onclick="toggleWatchlist(\'' + t + '\')">' + 
             (window.gWL().includes(t) ? '⭐ 已加自選' : '☆ 加自選') + '</button>' +
+            '<button class="action-btn secondary" onclick="showAddFavoriteDialog()">📚 收藏分析</button>' +
             '</div>';
         
         // 自選股買入按鈕
