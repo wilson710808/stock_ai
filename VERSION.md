@@ -90,3 +90,18 @@
 - 恢復結果頁「📚 收藏分析」按鈕，手動收藏與自動收藏都可用
 - 移除 index.html 內舊版 inline 收藏腳本，避免覆蓋模組化實作
 - 前端版本與 cache-buster 升至 `20260603002`
+
+
+## v2.3.0 — 2026-06-03 (Baseline)
+**Baseline 版本**：自 v2.2.x 一系列修復後，基本功能（登入/註冊、報價、K 線圖、決策建議、收藏、持倉/自選、AI 分析）已可穩定運作，正式升 minor 至 v2.3.0 作為後續迭代基準。
+
+繼承自 v2.2.11 的關鍵能力：
+- 現價來源：`realtime_price.py` Yahoo `regularMarketPrice` 優先 → Stooq → TwelveData → EODHD
+- 當日漲幅一律以 `(現價 - 前一日收盤價) / 前一日收盤價` 計算
+- 持倉列表 / AI 持倉分析 / 自選股皆從同一報價鏈路取得實時報價
+- K 線圖：EODHD → Yahoo → TwelveData，最後一根蠟燭與當前現價對齊
+- 決策建議卡片：兼容 `[RECOMMENDATION:BUY|HOLD|SELL|AVOID]` 與中文「最終建議/當前建議/綜合評級」
+- 收藏：搜尋成功後依「板塊 → 個股 → 日期」自動分類，支援 PUT 更新筆記
+- 認證：JWT + cookie，子路徑反代下 `/api/auth/me` 正常解析 token
+- 前端模組化：app-config/utils/auth/data/analysis/portfolio/watchlist/recommend/init/app 共 10 模組
+- 前端版本與 cache-buster 升至 `20260603030`
