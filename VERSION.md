@@ -105,3 +105,26 @@
 - 認證：JWT + cookie，子路徑反代下 `/api/auth/me` 正常解析 token
 - 前端模組化：app-config/utils/auth/data/analysis/portfolio/watchlist/recommend/init/app 共 10 模組
 - 前端版本與 cache-buster 升至 `20260603030`
+
+
+## v2.3.1 — 2026-06-03
+**修復「持倉/自選/搜尋」當日漲跌幅在不同資料源下不一致的問題**
+
+### 根因
+v2.3.0 報價鏈路雖然在後端用 `(price - prevClose) / prevClose` 重算 changePercent，但前提是 `prevClose` 與 `price` 在語意上必須同源、同日對位：
+- Yahoo `chartPreviousClose` 在跨夜/盤前/盤後可能與 `regularMarketPrice` 不在同一個交易日對位
+- Stooq EOD CSV 的 `close` 是「上一個完整交易日收盤」，跟「現在的 Yahoo 盤中價」混用會造成漲幅錯位
+- 模擬資料 fallback 把 `prevClose = price`，會推出 0% 的假漲幅
+
+### 修復
+- `realtime_price.py`：
+  - 新增 `_validate_quote_pair(q)` 合理性檢查：`prevClose<=0`、`prev==price`、`|pct|>50%` 均視為不可信，直接換下一個資料源
+  - 新增 `_attach_prev_close_from_kline(q,t)`：Yahoo 拿到的盤中現價若 prevClose 不可信，用 EODHD 日線倒數第二根 close 校正
+  - 新增 `_quote_from_eodhd_kline(t)`：直接從 EODHD K 線取最後兩根 close，保證 `price` / `prevClose` 同源同語意
+  - `get_quote(t)` 主流程改為：Yahoo（含校正）→ EODHD K 線 → Stooq → TwelveData → 模擬
+- `server.js` `normalizeQuoteResult`：當推算出來的 `|pct|>50%` 或 prevClose 缺失時，把 `change` / `changePercent` 設為 `null`，前端 fmtPct 自動顯示 `--`，避免錯誤訊號誤導
+- `public/app-utils.js`：新增共享工具 `window.dailyChange(q)`，封裝 `(price - prevClose)/prevClose`，三處顯示一律改用此工具：
+  - `app-portfolio.js`：持倉列表當日漲跌
+  - `app-watchlist.js`：自選股列表 + 漲跌幅排序
+  - `app-analysis.js`：搜尋分析 `renderQuoteOnly` + `renderResult` 頭卡
+- 前端 cache-buster 升至 `20260603031`

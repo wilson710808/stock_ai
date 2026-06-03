@@ -194,9 +194,9 @@
             // 排序
             var sort = $('wlSortSelect') ? $('wlSortSelect').value : 'default';
             if (sort === 'change-desc') {
-                quotes.sort(function(a, b) { return (b.changePercent || 0) - (a.changePercent || 0); });
+                quotes.sort(function(a, b) { var ap = window.dailyChange(a).changePercent || 0; var bp = window.dailyChange(b).changePercent || 0; return bp - ap; });
             } else if (sort === 'change-asc') {
-                quotes.sort(function(a, b) { return (a.changePercent || 0) - (b.changePercent || 0); });
+                quotes.sort(function(a, b) { var ap = window.dailyChange(a).changePercent || 0; var bp = window.dailyChange(b).changePercent || 0; return ap - bp; });
             } else if (sort === 'name-asc') {
                 quotes.sort(function(a, b) { return (a.name || a.ticker).localeCompare(b.name || b.ticker); });
             } else if (sort === 'priority' && window.currentUser) {
@@ -215,7 +215,11 @@
             
             // 渲染卡片
             container.innerHTML = quotes.map(function(q) {
-                var up = q.change >= 0;
+                // 統一透過 window.dailyChange 重算當日漲跌，入源 = q.price + q.prevClose
+                var dc = window.dailyChange(q);
+                var qChange = dc.change;
+                var qPct = dc.changePercent;
+                var up = (qChange || 0) >= 0;
                 var meta = {};
                 
                 if (window.currentUser) {
@@ -244,8 +248,8 @@
                     '<div class="wl-name">' + q.name + '</div>' +
                     '</div>' +
                     '<div style="text-align:right">' +
-                    '<div class="wl-current" style="color:' + window.udC(q.change) + '">' + window.fmtP(q.price) + '</div>' +
-                    '<div class="wl-change" style="color:' + window.udC(q.change) + '">' + window.udA(q.change) + ' ' + window.fmtPct(q.changePercent) + '</div>' +
+                    '<div class="wl-current" style="color:' + window.udC(qChange) + '">' + window.fmtP(q.price) + '</div>' +
+                    '<div class="wl-change" style="color:' + window.udC(qChange) + '">' + window.udA(qChange) + ' ' + window.fmtPct(qPct) + '</div>' +
                     '</div></div>' +
                     
                     (note ? '<div class="wl-note"><div class="wl-note-text">📝 ' + note + '</div>' +

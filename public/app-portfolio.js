@@ -474,10 +474,10 @@
                 var profitPct = cost > 0 ? (profit / cost * 100) : 0;
                 var ratio = totalValue > 0 ? (value / totalValue * 100) : 0;
                 var up = profit >= 0;
-                // 當日漲跌幅固定以「現價 - 前一交易日收盤價」/「前一交易日收盤價」計算。
-                var prevClose = q && Number(q.prevClose) > 0 ? Number(q.prevClose) : 0;
-                var chg = prevClose > 0 ? (cp - prevClose) : (q ? q.change : 0);
-                var chgPct = prevClose > 0 ? (chg / prevClose * 100) : (q ? q.changePercent : 0);
+                // 當日漲跌幅一律透過 window.dailyChange 以「現價 - 前一交易日收盤」計算，保證持倉/自選/分析三處完全一致。
+                var dc = window.dailyChange(q);
+                var chg = dc.change;
+                var chgPct = dc.changePercent;
                 var sl = window.currentUser ? p.stop_loss : p.stopLoss;
                 var tp = window.currentUser ? p.take_profit : p.takeProfit;
                 var note = window.currentUser ? p.note : (p.note || '');

@@ -55,6 +55,31 @@
     window.fmtPct = function(n) {
         return n != null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '-';
     };
+
+    /**
+     * 統一計算「當日漲跌」：公式 = (price - prevClose) / prevClose
+     * @param {object} q - quote 物件，預期含 price 與 prevClose
+     * @returns {{change:(number|null), changePercent:(number|null), valid:boolean}}
+     */
+    window.dailyChange = function(q) {
+        if (!q) return { change: null, changePercent: null, valid: false };
+        var price = Number(q.price);
+        var prev = Number(q.prevClose);
+        if (!isFinite(price) || !isFinite(prev) || prev <= 0) {
+            return { change: null, changePercent: null, valid: false };
+        }
+        var diff = price - prev;
+        var pct = diff / prev * 100;
+        if (Math.abs(pct) > 50) {
+            // 跨日對位錯位的保護，宁可顯示 -- 也不誤導用戶
+            return { change: null, changePercent: null, valid: false };
+        }
+        return {
+            change: Math.round(diff * 100) / 100,
+            changePercent: Math.round(pct * 100) / 100,
+            valid: true
+        };
+    };
     
     /**
      * 格式化日期時間

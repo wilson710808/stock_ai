@@ -195,7 +195,9 @@
     window.renderQuoteOnly = function(t, q) {
         if (!q || !q.success) return;
         
-        var up = q.change >= 0;
+        // 統一透過 window.dailyChange 重算當日漲跌：(price - prevClose) / prevClose
+        var dc1 = window.dailyChange(q);
+        var up = (dc1.change || 0) >= 0;
         var resultView = window.getResultView() || $('resultView');
         if (!resultView) return;
         
@@ -212,8 +214,8 @@
             '</div>' +
             '<div style="text-align:right">' +
             '<div style="font-size:16px;font-weight:600;color:' + (up ? '#4ADE80' : '#F87171') + '">' +
-            (up ? '▲' : '▼') + ' ' + window.fmtP(Math.abs(q.change)) + '</div>' +
-            '<div style="font-size:14px;color:' + (up ? '#4ADE80' : '#F87171') + '">(' + window.fmtPct(q.changePercent) + ')</div>' +
+            (up ? '▲' : '▼') + ' ' + window.fmtP(Math.abs(dc1.change || 0)) + '</div>' +
+            '<div style="font-size:14px;color:' + (up ? '#4ADE80' : '#F87171') + '">(' + window.fmtPct(dc1.changePercent) + ')</div>' +
             '</div>' +
             '</div>' +
             '<div style="font-size:12px;opacity:.7">' + (q.note || '') + '</div>' +
@@ -250,7 +252,8 @@
         var qh = '';
         
         if (q && q.success) {
-            var up = q.change >= 0;
+            var dc2 = window.dailyChange(q);
+            var up = (dc2.change || 0) >= 0;
             qh = '<div class="result-card" style="background:linear-gradient(135deg,var(--primary),#2d2d4a);color:#fff;margin-bottom:12px">' +
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">' +
                 '<div>' +
@@ -259,8 +262,8 @@
                 '</div>' +
                 '<div style="text-align:right">' +
                 '<div style="font-size:16px;font-weight:600;color:' + (up ? '#4ADE80' : '#F87171') + '">' +
-                (up ? '▲' : '▼') + ' ' + window.fmtP(Math.abs(q.change)) + '</div>' +
-                '<div style="font-size:14px;color:' + (up ? '#4ADE80' : '#F87171') + '">(' + window.fmtPct(q.changePercent) + ')</div>' +
+                (up ? '▲' : '▼') + ' ' + window.fmtP(Math.abs(dc2.change || 0)) + '</div>' +
+                '<div style="font-size:14px;color:' + (up ? '#4ADE80' : '#F87171') + '">(' + window.fmtPct(dc2.changePercent) + ')</div>' +
                 '</div>' +
                 '</div>' +
                 '<div style="font-size:12px;opacity:.7">' + (q.note || '') + '</div>' +

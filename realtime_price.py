@@ -443,57 +443,131 @@ def _build_quote_response(ticker, data):
 # CLI 入口
 # ============================================
 
-def get_quote(ticker):
-    """主流程：沿用 v2.0.0 的 realtime_price.py 報價鏈路，並以 Yahoo regularMarketPrice 作為當前現價優先來源。"""
-    # Step 1: Yahoo Finance regularMarketPrice（當前現價；同時用 chartPreviousClose 算當日漲幅）
-    result = get_quote_yahoo(ticker)
-    if result.get('success'):
-        return result
-
-    # Step 2: Stooq CSV（免費無需 API Key；作為 Yahoo 不可用時的備用）
-    stooq = get_quote_stooq(ticker)
-    if stooq.get('success'):
-        return stooq
-
-    # Step 3: Twelve Data
-    td = get_quote_twelvedata(ticker)
-    if td.get('success'):
-        return td
-
-    # Step 4: 從 EODHD K線獲取最新收盤價（作為備用）
+def _quote_from_eodhd_kline(ticker):
+    """從 EODHD 日線取最新兩根 close → price/prevClose 同源同語意，避免跨源計算偏差。"""
     try:
         kline = get_kline_eodhd(ticker, 30)
-        if kline.get('success') and kline.get('candles') and len(kline['candles']) >= 1:
-            last_candle = kline['candles'][-1]
-            prev_candle = kline['candles'][-2] if len(kline['candles']) >= 2 else last_candle
+        if not (kline.get('success') and kline.get('candles') and len(kline['candles']) >= 2):
+            return None
+        last_candle = kline['candles'][-1]
+        prev_candle = kline['candles'][-2]
+        price = float(last_candle['close'])
+        prev_close = float(prev_candle['close'])
+        if prev_close <= 0:
+            return None
+        change = round(price - prev_close, 2)
+        change_percent = round((price - prev_close) / prev_close * 100, 2)
+        name = _TICKER_NAMES.get(ticker.upper(), ticker.upper())
+        return {
+            'success': True,
+            'ticker': ticker.upper(),
+            'name': name,
+            'price': round(price, 2),
+            'change': change,
+            'changePercent': change_percent,
+            'prevClose': round(prev_close, 2),
+            'open': round(float(last_candle.get('open', price)), 2),
+            'high': round(float(last_candle.get('high', price)), 2),
+            'low': round(float(last_candle.get('low', price)), 2),
+            'volume': int(last_candle.get('volume', 0) or 0),
+            'timestamp': int(datetime.now().timestamp() * 1000),
+            'source': 'eodhd_kline',
+            'note': 'EODHD 日線（price=最新交易日收盤、prevClose=前一交易日收盤，同源計算當日漲幅）'
+        }
+    except Exception:
+        return None
 
-            price = last_candle['close']
-            prev_close = prev_candle['close']
-            change = round(price - prev_close, 2)
-            change_percent = round((change / prev_close * 100), 2) if prev_close > 0 else 0
 
-            name = _TICKER_NAMES.get(ticker.upper(), ticker.upper())
+def _validate_quote_pair(q):
+    """檢查 quote 的 price/prevClose 是否語意一致；不一致直接丟棄改用下一個資料源。
 
-            return {
-                'success': True,
-                'ticker': ticker.upper(),
-                'name': name,
-                'price': round(price, 2),
-                'change': change,
-                'changePercent': change_percent,
-                'prevClose': round(prev_close, 2),
-                'open': round(last_candle['open'], 2),
-                'high': round(last_candle['high'], 2),
-                'low': round(last_candle['low'], 2),
-                'volume': int(last_candle.get('volume', 0)),
-                'timestamp': int(datetime.now().timestamp() * 1000),
-                'source': 'eodhd_kline',
-                'note': 'EODHD 真實收盤價（與 K線圖一致）'
-            }
-    except Exception as e:
+    判定不可信的情況：
+    - prevClose 缺失、<=0 或等於 price（fallback 模擬常見）
+    - |changePercent| > 50%（極端值，多半是跨日對位錯了）
+    """
+    if not isinstance(q, dict) or not q.get('success'):
+        return False
+    try:
+        price = float(q.get('price') or 0)
+        prev = float(q.get('prevClose') or 0)
+    except Exception:
+        return False
+    if price <= 0 or prev <= 0:
+        return False
+    if abs(price - prev) < 1e-6:
+        return False
+    pct = abs((price - prev) / prev * 100)
+    if pct > 50:
+        return False
+    return True
+
+
+def _attach_prev_close_from_kline(q, ticker):
+    """當盤中現價可信但 prevClose 不可信時，用 EODHD 日線倒數第二根 close 補正。
+
+    這對 Yahoo regularMarketPrice + chartPreviousClose 在跨夜/盤前盤後時的偏差特別有效。
+    """
+    try:
+        kline = get_kline_eodhd(ticker, 10)
+        if not (kline.get('success') and kline.get('candles') and len(kline['candles']) >= 2):
+            return q
+        candles = kline['candles']
+        last_close = float(candles[-1]['close'])
+        prev_close = float(candles[-2]['close'])
+        price = float(q.get('price') or 0)
+        # 啟發式：若現價已是「今天」（與 EODHD 最後一根日線差異 > 0.5%），則用「最後一根」當 prevClose；否則用「倒數第二根」。
+        # 這樣不論盤中或收盤都能對齊。
+        if price > 0 and last_close > 0 and abs(price - last_close) / last_close > 0.005:
+            new_prev = last_close
+        else:
+            new_prev = prev_close
+        if new_prev > 0 and abs(new_prev - price) > 1e-6:
+            q['prevClose'] = round(new_prev, 2)
+            q['change'] = round(price - new_prev, 2)
+            q['changePercent'] = round((price - new_prev) / new_prev * 100, 2)
+            q['note'] = (q.get('note', '') + ' + EODHD prevClose 校正').strip()
+    except Exception:
         pass
+    return q
 
-    # Step 5: 最後防線 - 模擬數據
+
+def get_quote(ticker):
+    """主流程：以「現價與前一交易日收盤同源、可驗證」為核心，避免跨源 prevClose 對位偏差。
+
+    1) Yahoo Finance（盤中現價最即時）→ 若 prevClose 不一致就用 EODHD 日線補正。
+    2) EODHD K 線（最穩定，price/prevClose 必同源）。
+    3) Stooq EOD（兩個 close 同源）。
+    4) TwelveData（previous_close 與 close 同源）。
+    5) 模擬資料（最後防線）。
+    """
+    # Step 1: Yahoo（即時現價優先，prevClose 由 EODHD 校正）
+    y = get_quote_yahoo(ticker)
+    if y.get('success') and float(y.get('price') or 0) > 0:
+        if not _validate_quote_pair(y):
+            y = _attach_prev_close_from_kline(y, ticker)
+        if _validate_quote_pair(y):
+            return y
+
+    # Step 2: EODHD K 線推算（price/prevClose 必同源、穩定）
+    eod = _quote_from_eodhd_kline(ticker)
+    if _validate_quote_pair(eod):
+        return eod
+
+    # Step 3: Stooq EOD
+    stooq = get_quote_stooq(ticker)
+    if _validate_quote_pair(stooq):
+        return stooq
+
+    # Step 4: TwelveData
+    td = get_quote_twelvedata(ticker)
+    if _validate_quote_pair(td):
+        return td
+
+    # Step 5: 若 Yahoo 拿到價格但 prevClose 始終缺，至少回 Yahoo 的數據（changePercent 可能為 0）
+    if y.get('success') and float(y.get('price') or 0) > 0:
+        return y
+
+    # Step 6: 最後防線 - 模擬數據
     return get_simulated_data(ticker)
 
 

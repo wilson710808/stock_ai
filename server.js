@@ -1261,11 +1261,23 @@ function normalizeQuoteResult(result, ticker) {
 
     // 當日漲跌必須以「現價 vs 前一交易日收盤價」重新計算，避免任何來源回傳的 changePercent 不一致。
     if (Number.isFinite(result.price) && Number.isFinite(result.prevClose) && result.prevClose > 0) {
-      result.change = round(result.price - result.prevClose, 2);
-      result.changePercent = round((result.price - result.prevClose) / result.prevClose * 100, 2);
+      const diff = result.price - result.prevClose;
+      const pct = diff / result.prevClose * 100;
+      // 健全性檢查：若推算出的當日漲跌幅 |pct|>50%，幾乎必定是 prevClose 與 price 跨日對位錯位 ──
+      // 直接把 changePercent 設為 null，前端會 fallback 顯示「--」，避免錯誤訊號誤導用戶。
+      if (Math.abs(pct) > 50) {
+        result.change = null;
+        result.changePercent = null;
+        result.prevCloseSuspect = true;
+      } else {
+        result.change = round(diff, 2);
+        result.changePercent = round(pct, 2);
+      }
     } else {
-      result.change = Number(result.change || 0);
-      result.changePercent = Number(result.changePercent || 0);
+      // 沒有可信 prevClose 就不要瞎算
+      result.change = null;
+      result.changePercent = null;
+      result.prevCloseSuspect = true;
     }
 
     result.open = Number(result.open || 0);
