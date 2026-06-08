@@ -107,6 +107,27 @@
 - 前端版本與 cache-buster 升至 `20260603030`
 
 
+## v2.3.2 — 2026-06-09
+**修復「收藏/持倉」現價來源過期，導致當日漲跌幅錯誤的問題**
+
+### 根因
+- Yahoo Finance 在目前伺服器 IP 上持續返回 429。
+- EODHD demo endpoint 近期返回 403。
+- Stooq endpoint 返回 404。
+- 報價鏈路因此落到 `stock_prices.json` 中央靜態價格庫或哈希模擬資料，造成 ARM 等股票顯示舊價格（例如 ARM 顯示 335.20，而非即時約 347 美元），並進一步導致當日漲跌幅錯誤。
+
+### 修復
+- `realtime_price.py` 新增 `get_quote_nasdaq(ticker)`，使用 Nasdaq 官方 quote API 作為第一即時來源。
+- Nasdaq 回傳 `lastSalePrice + netChange + percentageChange`，後端以 `prevClose = price - netChange` 推回前收，確保當日漲跌幅與現價同源。
+- 報價主流程調整為：Nasdaq → Yahoo（含 EODHD prevClose 校正）→ EODHD K 線 → Stooq → TwelveData → `stock_prices.json` / 哈希模擬最後防線。
+- `_validate_quote_pair` 支援 `allow_zero_change`，避免可信即時源在平盤時被誤判，但仍阻止靜態 fallback 製造 0% 假漲幅。
+
+### 驗證
+- `python3 realtime_price.py ARM` 返回 Nasdaq 即時源，ARM 約 `$346.97`，prevClose `$342.93`，changePercent 約 `+1.18%`。
+- 批量驗證 ARM/NVDA/CI/EPAM/GPRO/NKE/ADTN/UNH/AAPL/TSLA 均返回 Nasdaq 即時價格，不再落到 `central_db` / `simulated_fallback`。
+
+---
+
 ## v2.3.1 — 2026-06-03
 **修復「持倉/自選/搜尋」當日漲跌幅在不同資料源下不一致的問題**
 

@@ -19,8 +19,101 @@ _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 _UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
+def _to_float(value):
+    """寬鬆解析金融 API 回傳的價格字串：$346.74、+3.81、1.11%、6,015,961 等。"""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s or s in ('N/A', '--', '-'):
+        return 0.0
+    s = re.sub(r'[^0-9.\-+]', '', s)
+    if s in ('', '+', '-', '.', '+.', '-.'):
+        return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
 # ============================================
-# Yahoo Finance（主力，免費無需 API Key）
+# Nasdaq API（即時報價，免費無需 API Key）
+# ============================================
+
+def get_quote_nasdaq(ticker):
+    """Nasdaq 官方 quote API。
+
+    2026-06 修復：Yahoo 429、Stooq/EODHD 403 時，系統會掉到 stock_prices.json
+    中央靜態價格庫，導致 ARM/NVDA/CI/EPAM 等收藏股現價嚴重過期。
+    Nasdaq API 在此伺服器可穩定返回盤中 real-time lastSalePrice，因此作為第一即時來源。
+    """
+    try:
+        t = ticker.upper().replace('.', '-')
+        url = f'https://api.nasdaq.com/api/quote/{t}/info?assetclass=stocks'
+        headers = {
+            'User-Agent': _UA,
+            'Accept': 'application/json,text/plain,*/*',
+            'Origin': 'https://www.nasdaq.com',
+            'Referer': 'https://www.nasdaq.com/'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12, context=_ssl_ctx) as response:
+            data = json.loads(response.read().decode())
+
+        info = data.get('data') or {}
+        primary = info.get('primaryData') or {}
+        if not primary:
+            return {'error': 'Nasdaq: 無 primaryData'}
+
+        price = _to_float(primary.get('lastSalePrice'))
+        change = _to_float(primary.get('netChange'))
+        change_pct = _to_float(primary.get('percentageChange'))
+        if price <= 0:
+            return {'error': 'Nasdaq: 無有效現價'}
+
+        # Nasdaq info endpoint 不直接給 prevClose，但 netChange = price - prevClose。
+        prev_close = round(price - change, 4) if change else 0
+        if prev_close <= 0 and change_pct:
+            # pct = change / prevClose * 100 → prevClose = price / (1 + pct/100)
+            prev_close = round(price / (1 + change_pct / 100.0), 4)
+            change = round(price - prev_close, 4)
+
+        # dayrange: "High/Low:" → "339.00 - 364.35"
+        day_range = (((info.get('keyStats') or {}).get('dayrange') or {}).get('value') or '')
+        high = low = 0.0
+        m = re.search(r'([0-9.,]+)\s*-\s*([0-9.,]+)', day_range)
+        if m:
+            # Nasdaq 的 dayrange 文案是 High/Low，value 實際常為 low - high。
+            a, b = _to_float(m.group(1)), _to_float(m.group(2))
+            low, high = min(a, b), max(a, b)
+
+        return {
+            'success': True,
+            'ticker': t,
+            'name': info.get('companyName') or _TICKER_NAMES.get(t, t),
+            'price': round(price, 4),
+            'change': round(change, 4),
+            'changePercent': round(change_pct, 2),
+            'prevClose': round(prev_close, 4),
+            'open': 0,
+            'high': round(high, 4),
+            'low': round(low, 4),
+            'volume': int(_to_float(primary.get('volume'))),
+            'fiftyTwoWeekHigh': 0,
+            'fiftyTwoWeekLow': 0,
+            'timestamp': int(datetime.now().timestamp() * 1000),
+            'source': 'nasdaq',
+            'note': 'Nasdaq 官方即時報價'
+        }
+    except urllib.error.HTTPError as e:
+        return {'error': f'Nasdaq HTTP {e.code}'}
+    except Exception as e:
+        return {'error': f'Nasdaq error: {str(e)}'}
+
+
+# ============================================
+# Yahoo Finance（免費無需 API Key；此伺服器偶發 429）
 # ============================================
 
 def _yahoo_chart(ticker, range='2d', interval='1d'):
@@ -478,11 +571,12 @@ def _quote_from_eodhd_kline(ticker):
         return None
 
 
-def _validate_quote_pair(q):
+def _validate_quote_pair(q, allow_zero_change=False):
     """檢查 quote 的 price/prevClose 是否語意一致；不一致直接丟棄改用下一個資料源。
 
     判定不可信的情況：
-    - prevClose 缺失、<=0 或等於 price（fallback 模擬常見）
+    - prevClose 缺失、<=0
+    - prevClose == price 且非可信即時源（fallback 模擬常見，會推出 0% 假漲幅）
     - |changePercent| > 50%（極端值，多半是跨日對位錯了）
     """
     if not isinstance(q, dict) or not q.get('success'):
@@ -494,7 +588,7 @@ def _validate_quote_pair(q):
         return False
     if price <= 0 or prev <= 0:
         return False
-    if abs(price - prev) < 1e-6:
+    if abs(price - prev) < 1e-6 and not allow_zero_change:
         return False
     pct = abs((price - prev) / prev * 100)
     if pct > 50:
@@ -532,42 +626,49 @@ def _attach_prev_close_from_kline(q, ticker):
 
 
 def get_quote(ticker):
-    """主流程：以「現價與前一交易日收盤同源、可驗證」為核心，避免跨源 prevClose 對位偏差。
+    """主流程：以「即時現價優先，prevClose 同源可驗證」為核心。
 
-    1) Yahoo Finance（盤中現價最即時）→ 若 prevClose 不一致就用 EODHD 日線補正。
-    2) EODHD K 線（最穩定，price/prevClose 必同源）。
-    3) Stooq EOD（兩個 close 同源）。
-    4) TwelveData（previous_close 與 close 同源）。
-    5) 模擬資料（最後防線）。
+    1) Nasdaq 官方即時報價（lastSalePrice + netChange 推回 prevClose）
+    2) Yahoo Finance（盤中現價）→ 若 prevClose 不一致就用 EODHD 日線補正
+    3) EODHD K 線（price/prevClose 同源）
+    4) Stooq EOD
+    5) TwelveData
+    6) stock_prices.json/哈希模擬（最後防線；不再讓它覆蓋可信即時源）
     """
-    # Step 1: Yahoo（即時現價優先，prevClose 由 EODHD 校正）
+    # Step 1: Nasdaq（此伺服器目前最穩定的即時來源）
+    nasdaq = get_quote_nasdaq(ticker)
+    if _validate_quote_pair(nasdaq, allow_zero_change=True):
+        return nasdaq
+
+    # Step 2: Yahoo（即時現價優先，prevClose 由 EODHD 校正）
     y = get_quote_yahoo(ticker)
     if y.get('success') and float(y.get('price') or 0) > 0:
         if not _validate_quote_pair(y):
             y = _attach_prev_close_from_kline(y, ticker)
-        if _validate_quote_pair(y):
+        if _validate_quote_pair(y, allow_zero_change=True):
             return y
 
-    # Step 2: EODHD K 線推算（price/prevClose 必同源、穩定）
+    # Step 3: EODHD K 線推算（price/prevClose 必同源、穩定）
     eod = _quote_from_eodhd_kline(ticker)
     if _validate_quote_pair(eod):
         return eod
 
-    # Step 3: Stooq EOD
+    # Step 4: Stooq EOD
     stooq = get_quote_stooq(ticker)
     if _validate_quote_pair(stooq):
         return stooq
 
-    # Step 4: TwelveData
+    # Step 5: TwelveData
     td = get_quote_twelvedata(ticker)
     if _validate_quote_pair(td):
         return td
 
-    # Step 5: 若 Yahoo 拿到價格但 prevClose 始終缺，至少回 Yahoo 的數據（changePercent 可能為 0）
-    if y.get('success') and float(y.get('price') or 0) > 0:
-        return y
+    # Step 6: 若即時源至少拿到有效現價，仍優先返回，不讓靜態中央庫覆蓋現價
+    for candidate in (nasdaq, y):
+        if isinstance(candidate, dict) and candidate.get('success') and float(candidate.get('price') or 0) > 0:
+            return candidate
 
-    # Step 6: 最後防線 - 模擬數據
+    # Step 7: 最後防線 - 模擬/中央靜態數據（只在全部外部源失敗時使用）
     return get_simulated_data(ticker)
 
 
